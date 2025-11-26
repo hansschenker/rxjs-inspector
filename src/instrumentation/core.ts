@@ -63,7 +63,7 @@ export function installRxjsInstrumentation(): void {
   if (proto.__rxjsInspectorInstalled) return;
   proto.__rxjsInspectorInstalled = true;
 
-  const originalSubscribe = proto.subscribe as Observable<any>['subscribe'];
+  const originalSubscribe: Observable<unknown>['subscribe'] = proto.subscribe;
 
   proto.subscribe = function <T>(
     this: Observable<T>,
@@ -115,7 +115,8 @@ export function installRxjsInstrumentation(): void {
       },
     };
 
-    const subscription = originalSubscribe.call(this, wrappedObserver) as Subscription;
+    // The one small “escape hatch” for TS:
+    const subscription = originalSubscribe.call(this, wrappedObserver as any) as Subscription;
 
     (subscription as any)[SUB_ID] = subscriptionId;
     const originalUnsubscribe = subscription.unsubscribe;
