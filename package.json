@@ -1,0 +1,18 @@
+{
+  "name": "rxjs-inspector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal viable RxJS runtime inspector (MVP).",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "simple": "ts-node src/example/simple.ts"
+  },
+  "dependencies": {
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "ts-node": "^10.9.2",
+    "@types/node": "^22.7.4"
+  }
+}
