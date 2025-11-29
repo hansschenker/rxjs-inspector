@@ -1,4 +1,5 @@
 // src/cli/print-log.ts
+
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -6,11 +7,11 @@ type NotificationType = 'subscribe' | 'next' | 'error' | 'complete' | 'unsubscri
 
 interface NotificationEvent {
   type: NotificationType;
+  runId?: number;              // optional for legacy events
   timestamp: number;
   observableId: number;
   subscriptionId: number;
-  // any other fields: value, error, etc.
-  [key: string]: any;
+  [key: string]: any;          // value, error, etc.
 }
 
 function loadEvents(filePath: string): NotificationEvent[] {
@@ -21,15 +22,13 @@ function loadEvents(filePath: string): NotificationEvent[] {
   return lines.map((line) => JSON.parse(line) as NotificationEvent);
 }
 
-function groupAndPrint(events: NotificationEvent[]): void {
+function printOneGroup(events: NotificationEvent[]): void {
   if (events.length === 0) {
-    console.log('No events found.');
+    console.log('  (no events)');
     return;
   }
 
-  const startTime = events[0].timestamp;
-
-  // Group by observableId then subscriptionId
+  // Group by observableId → subscriptionId
   const byObservable = new Map<number, Map<number, NotificationEvent[]>>();
 
   for (const evt of events) {
@@ -43,12 +42,17 @@ function groupAndPrint(events: NotificationEvent[]): void {
     bySub.set(evt.subscriptionId, list);
   }
 
+  // Compute start time for this group
+  const sortedAll = [...events].sort((a, b) => a.timestamp - b.timestamp);
+  const start = sortedAll[0]?.timestamp ?? 0;
+
   for (const [observableId, bySub] of byObservable.entries()) {
-    console.log(`\nObservable ${observableId}:`);
+    console.log(`Observable ${observableId}:`);
     for (const [subscriptionId, subEvents] of bySub.entries()) {
       console.log(`  Subscription ${subscriptionId}:`);
-      for (const evt of subEvents) {
-        const dt = evt.timestamp - startTime;
+      const sorted = [...subEvents].sort((a, b) => a.timestamp - b.timestamp);
+      for (const evt of sorted) {
+        const dt = evt.timestamp - start;
         const base = `    +${dt}ms ${evt.type.padEnd(10)}`;
         if (evt.type === 'next' && 'value' in evt) {
           console.log(`${base} value = ${JSON.stringify(evt.value)}`);
@@ -59,6 +63,40 @@ function groupAndPrint(events: NotificationEvent[]): void {
         }
       }
     }
+  }
+}
+
+function groupAndPrint(events: NotificationEvent[]): void {
+  if (events.length === 0) {
+    console.log('No events found.');
+    return;
+  }
+
+  const legacy: NotificationEvent[] = [];
+  const byRun = new Map<number, NotificationEvent[]>();
+
+  for (const evt of events) {
+    if (typeof evt.runId === 'number') {
+      const list = byRun.get(evt.runId) ?? [];
+      list.push(evt);
+      byRun.set(evt.runId, list);
+    } else {
+      legacy.push(evt);
+    }
+  }
+
+  // First, print legacy events (no runId)
+  if (legacy.length > 0) {
+    console.log('=== Legacy events (no runId) ===');
+    printOneGroup(legacy);
+  }
+
+  // Then, print each run with a proper header
+  const runIds = Array.from(byRun.keys()).sort((a, b) => a - b);
+  for (const runId of runIds) {
+    console.log(`\n=== Run ${runId} ===`);
+    const runEvents = byRun.get(runId)!;
+    printOneGroup(runEvents);
   }
 }
 

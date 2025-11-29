@@ -1,15 +1,28 @@
 import { NotificationEvent } from '../instrumentation/types';
 
-export function filterBySubscriptionId(
+export function filterByMaxObservableId(
   events: NotificationEvent[],
-  subscriptionId: number,
+  maxId: number,
 ): NotificationEvent[] {
-  return events.filter(e => e.subscriptionId === subscriptionId);
+  return events.filter(e => e.observableId <= maxId);
 }
 
-export function filterByObservableId(
-  events: NotificationEvent[],
-  observableId: number,
-): NotificationEvent[] {
-  return events.filter(e => e.observableId === observableId);
-}
+
+
+
+
+// import { NotificationEvent } from '../instrumentation/types';
+
+// export function filterBySubscriptionId(
+//   events: NotificationEvent[],
+//   subscriptionId: number,
+// ): NotificationEvent[] {
+//   return events.filter(e => e.subscriptionId === subscriptionId);
+// }
+
+// export function filterByObservableId(
+//   events: NotificationEvent[],
+//   observableId: number,
+// ): NotificationEvent[] {
+//   return events.filter(e => e.observableId === observableId);
+// }
