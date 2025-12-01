@@ -4,6 +4,8 @@
   "private": true,
   "description": "Minimal viable RxJS runtime inspector (MVP).",
   "scripts": {
+  "inspect-log": "ts-node src/cli/print-log.ts",
+  "summarize-log": "ts-node src/cli/summarize-log.ts",
     "build": "tsc -p tsconfig.json",
     "simple": "ts-node src/example/simple.ts",
      "example:debounced": "ts-node src/example/debounced-search-timeline.ts"
