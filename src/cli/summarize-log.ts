@@ -21,6 +21,7 @@ interface ObservableSummary {
   nextCount: number;
   errorCount: number;
   completeCount: number;
+  unsubscribeCount: number;
   firstTimestamp: number | null;
   lastTimestamp: number | null;
 }
@@ -33,13 +34,7 @@ function loadEvents(filePath: string): NotificationEvent[] {
   return lines.map((line) => JSON.parse(line) as NotificationEvent);
 }
 
-function summarizeRun(runLabel: string, events: NotificationEvent[]): void {
-  if (events.length === 0) {
-    console.log(`=== ${runLabel} ===`);
-    console.log('  (no events)');
-    return;
-  }
-
+function buildSummary(events: NotificationEvent[]): Map<number, ObservableSummary> {
   const byObservable = new Map<number, ObservableSummary>();
 
   for (const evt of events) {
@@ -52,6 +47,7 @@ function summarizeRun(runLabel: string, events: NotificationEvent[]): void {
         nextCount: 0,
         errorCount: 0,
         completeCount: 0,
+        unsubscribeCount: 0,
         firstTimestamp: null,
         lastTimestamp: null,
       };
@@ -60,15 +56,22 @@ function summarizeRun(runLabel: string, events: NotificationEvent[]): void {
 
     summary.totalEvents++;
 
-    // track subscriptions
-    if (evt.type === 'subscribe' || evt.type === 'next' || evt.type === 'error' || evt.type === 'complete' || evt.type === 'unsubscribe') {
+    // track subscriptions / unsubscriptions
+    if (
+      evt.type === 'subscribe' ||
+      evt.type === 'next' ||
+      evt.type === 'error' ||
+      evt.type === 'complete' ||
+      evt.type === 'unsubscribe'
+    ) {
       summary.subscriptionIds.add(evt.subscriptionId);
     }
 
-    // counts
+    // counts by type
     if (evt.type === 'next') summary.nextCount++;
     if (evt.type === 'error') summary.errorCount++;
     if (evt.type === 'complete') summary.completeCount++;
+    if (evt.type === 'unsubscribe') summary.unsubscribeCount++;
 
     // timestamps
     if (summary.firstTimestamp === null || evt.timestamp < summary.firstTimestamp) {
@@ -78,6 +81,47 @@ function summarizeRun(runLabel: string, events: NotificationEvent[]): void {
       summary.lastTimestamp = evt.timestamp;
     }
   }
+
+  return byObservable;
+}
+
+function computeWarnings(s: ObservableSummary): string[] {
+  const warnings: string[] = [];
+
+  const hasNext = s.nextCount > 0;
+  const hasComplete = s.completeCount > 0;
+  const hasError = s.errorCount > 0;
+
+  // 1) Emits but never completes or errors
+  if (hasNext && !hasComplete && !hasError) {
+    warnings.push(
+      '⚠ emits values but never completes or errors (possible leak / intentionally infinite stream)'
+    );
+  }
+
+  // 2) Has errors
+  if (hasError) {
+    warnings.push(`⚠ emitted errors (errorCount = ${s.errorCount})`);
+  }
+
+  // 3) Multiple subscriptions
+  if (s.subscriptionIds.size > 1) {
+    warnings.push(
+      `ℹ multiple subscriptions (${s.subscriptionIds.size}) – consider share()/shareReplay() if upstream is expensive`
+    );
+  }
+
+  return warnings;
+}
+
+function summarizeRun(runLabel: string, events: NotificationEvent[]): void {
+  if (events.length === 0) {
+    console.log(`=== ${runLabel} ===`);
+    console.log('  (no events)');
+    return;
+  }
+
+  const byObservable = buildSummary(events);
 
   console.log(`=== ${runLabel} ===`);
 
@@ -92,12 +136,23 @@ function summarizeRun(runLabel: string, events: NotificationEvent[]): void {
         : 0;
 
     console.log(`Observable ${s.observableId}:`);
-    console.log(`  subscriptions: ${s.subscriptionIds.size}`);
-    console.log(`  events:       ${s.totalEvents}`);
-    console.log(`  next:         ${s.nextCount}`);
-    console.log(`  complete:     ${s.completeCount}`);
-    console.log(`  error:        ${s.errorCount}`);
-    console.log(`  duration:     ${duration}ms`);
+    console.log(`  subscriptions:    ${s.subscriptionIds.size}`);
+    console.log(`  events:           ${s.totalEvents}`);
+    console.log(`  next:             ${s.nextCount}`);
+    console.log(`  complete:         ${s.completeCount}`);
+    console.log(`  error:            ${s.errorCount}`);
+    console.log(`  unsubscribe:      ${s.unsubscribeCount}`);
+    console.log(`  duration:         ${duration}ms`);
+
+    const warnings = computeWarnings(s);
+    if (warnings.length === 0) {
+      console.log('  warnings:         (none)');
+    } else {
+      console.log('  warnings:');
+      for (const w of warnings) {
+        console.log(`    - ${w}`);
+      }
+    }
   }
 }
 
