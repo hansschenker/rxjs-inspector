@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Rxjs Inspector</title>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, sans-serif; }
+    body { margin: 0; padding: 0; background: #111; color: #eee; }
+    #app { display: flex; height: 100vh; }
+    #tree, #marbles { padding: 1rem; overflow: auto; }
+
+    #tree { width: 30%; border-right: 1px solid #333; }
+    #marbles { flex: 1; }
+
+    h2 { margin-top: 0; font-size: 1rem; text-transform: uppercase; color: #aaa; }
+
+    ul.tree {
+      list-style: none;
+      padding-left: 0.5rem;
+    }
+    ul.tree li {
+      margin: 0.1rem 0;
+      font-size: 0.85rem;
+    }
+
+    .obs-label {
+      font-weight: 600;
+      color: #ffcc66;
+    }
+    .op-name {
+      color: #66ccff;
+    }
+
+    .lane {
+      position: relative;
+      height: 26px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #333;
+    }
+    .lane-label {
+      position: absolute;
+      left: 0;
+      top: 4px;
+      width: 120px;
+      font-size: 0.75rem;
+      color: #aaa;
+    }
+    .lane-timeline {
+      position: absolute;
+      left: 130px;
+      right: 0;
+      height: 100%;
+      border-left: 1px solid #444;
+    }
+    .event {
+      position: absolute;
+      top: 4px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1px solid #999;
+      text-align: center;
+      line-height: 16px;
+      font-size: 0.65rem;
+      background: #222;
+    }
+    .event-next { border-color: #7ee787; }
+    .event-complete { border-radius: 0; border-color: #58a6ff; }
+    .event-error { border-radius: 0; border-color: #ff7b72; }
+
+    .status {
+      font-size: 0.75rem;
+      color: #888;
+      margin-bottom: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <section id="tree">
+      <h2>Operator Chain</h2>
+      <div class="status" id="status">Connecting to /events…</div>
+      <div id="tree-root"></div>
+    </section>
+    <section id="marbles">
+      <h2>Marble Lanes</h2>
+      <div id="lanes-root"></div>
+    </section>
+  </div>
+
+  <script type="module">
+    /**
+     * Very small JS data model:
+     * observable: { id, name, parent, children[], events[] }
+     */
+    const observables = new Map();
+    let globalStartTime = null;
+
+    const statusEl = document.getElementById('status');
+    const treeRoot = document.getElementById('tree-root');
+    const lanesRoot = document.getElementById('lanes-root');
+
+    function ensureObservable(id) {
+      if (!observables.has(id)) {
+        observables.set(id, {
+          id,
+          name: 'Observable',
+          parent: undefined,
+          children: [],
+          events: [],
+        });
+      }
+      return observables.get(id);
+    }
+
+    function rebuildTreeRelationships() {
+      // Clear children
+      for (const obs of observables.values()) {
+        obs.children = [];
+      }
+      // Link children to parents
+      for (const obs of observables.values()) {
+        if (obs.parent != null) {
+          const parent = observables.get(obs.parent);
+          if (parent) parent.children.push(obs);
+        }
+      }
+    }
+
+    function handleEvent(evt) {
+      const { type, observableId, timestamp } = evt;
+      const obs = ensureObservable(observableId);
+
+      if (type === 'observable-create') {
+        if (evt.operatorInfo) {
+          obs.name = evt.operatorInfo.name || obs.name;
+          obs.parent = evt.operatorInfo.parent;
+        }
+      } else {
+        obs.events.push(evt);
+      }
+
+      if (globalStartTime == null || timestamp < globalStartTime) {
+        globalStartTime = timestamp;
+      }
+
+      rebuildTreeRelationships();
+      render();
+    }
+
+    function render() {
+      renderTree();
+      renderMarbles();
+    }
+
+    function renderTree() {
+      const roots = Array.from(observables.values())
+        .filter(o => o.parent == null)
+        .sort((a, b) => a.id - b.id);
+
+      const ul = document.createElement('ul');
+      ul.className = 'tree';
+
+      for (const root of roots) {
+        ul.appendChild(renderTreeNode(root));
+      }
+
+      treeRoot.innerHTML = '';
+      treeRoot.appendChild(ul);
+    }
+
+    function renderTreeNode(node) {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <span class="obs-label">Observable ${node.id}</span>
+        <span class="op-name">(${node.name})</span>
+      `;
+
+      if (node.children.length) {
+        const ul = document.createElement('ul');
+        ul.className = 'tree';
+        node.children
+          .sort((a, b) => a.id - b.id)
+          .forEach(child => ul.appendChild(renderTreeNode(child)));
+        li.appendChild(ul);
+      }
+
+      return li;
+    }
+
+    function renderMarbles() {
+      if (globalStartTime == null) return;
+
+      const obsList = Array.from(observables.values())
+        .filter(o => o.events.length > 0)
+        .sort((a, b) => a.id - b.id);
+
+      lanesRoot.innerHTML = '';
+
+      const scalePxPerMs = 0.1; // 10px per 100ms
+
+      for (const obs of obsList) {
+        const lane = document.createElement('div');
+        lane.className = 'lane';
+
+        const label = document.createElement('div');
+        label.className = 'lane-label';
+        label.textContent = `#${obs.id} (${obs.name})`;
+        lane.appendChild(label);
+
+        const timeline = document.createElement('div');
+        timeline.className = 'lane-timeline';
+
+        for (const evt of obs.events) {
+          const x = (evt.timestamp - globalStartTime) * scalePxPerMs;
+
+          const el = document.createElement('div');
+          el.className = 'event';
+
+          if (evt.type === 'next') {
+            el.classList.add('event-next');
+            const v = evt.value;
+            el.textContent = String(v).charAt(0);
+          } else if (evt.type === 'complete') {
+            el.classList.add('event-complete');
+            el.textContent = '|';
+          } else if (evt.type === 'error') {
+            el.classList.add('event-error');
+            el.textContent = 'X';
+          } else {
+            continue;
+          }
+
+          el.style.left = `${x}px`;
+          timeline.appendChild(el);
+        }
+
+        lane.appendChild(timeline);
+        lanesRoot.appendChild(lane);
+      }
+    }
+
+    // --- Connect SSE ---
+    const es = new EventSource('/events');
+
+    es.onopen = () => {
+      statusEl.textContent = 'Connected to /events';
+    };
+
+    es.onerror = () => {
+      statusEl.textContent = 'Connection error (check server, CORS, or path)';
+    };
+
+    es.onmessage = (msg) => {
+      try {
+        const evt = JSON.parse(msg.data);
+        handleEvent(evt);
+      } catch (err) {

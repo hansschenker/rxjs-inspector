@@ -1,168 +1,180 @@
-// instrumentation/core.ts
+// src/instrumentation/core.ts
+import { Observable, Subscription } from 'rxjs';
+import { Subject } from 'rxjs';
+import {
+  defaultInstrumentationConfig,
+  InstrumentationConfig,
+  NotificationEvent,
+  OperatorInfo,
+} from './types';
 
-import { Observable, Subject, Subscription } from 'rxjs';
-import type { PartialObserver } from 'rxjs';
-
-// One run id per process / script execution
-const RUN_ID = Date.now();
-
-const INTERNAL_FLAG = '__rxjsInspectorInternalObservable';
-const SUB_ID = Symbol('rxjsInspectorSubscriptionId');
-
-// ─────────────────────────────────────────────────────────────
-// Event types
-// ─────────────────────────────────────────────────────────────
-
-export type NotificationCommon = {
-  runId: number;
-  timestamp: number;
-  observableId: number;
-  subscriptionId: number;
+type AnyObservable = Observable<unknown> & {
+  __rxjsInspectorId?: number;
+  source?: AnyObservable;
+  operator?: { constructor?: { name?: string } };
+  __rxjsInspectorInstalled?: boolean;
+  __rxjsInspectorOriginalSubscribe?: Observable<unknown>['subscribe'];
 };
 
-export type NotificationEvent =
-  | (NotificationCommon & { type: 'subscribe' })
-  | (NotificationCommon & { type: 'next'; value: unknown })
-  | (NotificationCommon & { type: 'error'; error: any })
-  | (NotificationCommon & { type: 'complete' })
-  | (NotificationCommon & { type: 'unsubscribe' });
-
-// ─────────────────────────────────────────────────────────────
-// Telemetry bus
-// ─────────────────────────────────────────────────────────────
-
 const notificationSubject = new Subject<NotificationEvent>();
+export const notifications$ = notificationSubject.asObservable();
 
-// Mark this observable as "internal" so we don't instrument it
-(notificationSubject as any)[INTERNAL_FLAG] = true;
+let config: InstrumentationConfig = defaultInstrumentationConfig;
 
-// Export as Observable so consumers can't next() into it directly
-export const notifications$ = notificationSubject as Observable<NotificationEvent>;
-
-// ─────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────
+export function configureInstrumentation(
+  opts: Partial<InstrumentationConfig>,
+): void {
+  config = { ...config, ...opts };
+}
 
 let nextObservableId = 1;
 let nextSubscriptionId = 1;
 
-function now(): number {
-  return Date.now();
+const now = () => Date.now();
+
+function emitEvent(event: NotificationEvent): void {
+  if (!config.enabled) return;
+  notificationSubject.next(event);
 }
 
-function getObservableId(obs: any): number {
+// ---- Operator / observable tracking ----
+
+function extractOperatorInfo(obs: AnyObservable): OperatorInfo {
+  const name =
+    obs.operator?.constructor?.name ||
+    // fallback to constructor name of the observable itself
+    (obs as any).constructor?.name ||
+    'Unknown';
+
+  const parent = obs.source?.__rxjsInspectorId;
+
+  let stackTrace: string | undefined;
+  try {
+    stackTrace = new Error().stack;
+  } catch {
+    // ignore
+  }
+
+  return { name, parent, stackTrace };
+}
+
+function getObservableId(obs: AnyObservable): number {
   if (!obs.__rxjsInspectorId) {
     obs.__rxjsInspectorId = nextObservableId++;
+
+    const operatorInfo = extractOperatorInfo(obs);
+
+    emitEvent({
+      type: 'observable-create',
+      timestamp: now(),
+      observableId: obs.__rxjsInspectorId,
+      operatorInfo,
+    });
   }
   return obs.__rxjsInspectorId;
 }
 
-function toObserver<T>(
-  observerOrNext?: PartialObserver<T> | ((value: T) => void),
-  error?: (err: any) => void,
-  complete?: () => void,
-): PartialObserver<T> {
-  if (typeof observerOrNext === 'function') {
-    return {
-      next: observerOrNext,
-      error,
-      complete,
-    };
-  }
-
-  // Empty object is a perfectly valid "do nothing" observer
-  return (observerOrNext ?? {}) as PartialObserver<T>;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Main instrumentation hook
-// ─────────────────────────────────────────────────────────────
+// ---- Install / uninstall instrumentation ----
 
 export function installRxjsInstrumentation(): void {
-  const proto = Observable.prototype as any;
-  if (proto.__rxjsInspectorInstalled) return;
-  proto.__rxjsInspectorInstalled = true;
+  const proto = Observable.prototype as AnyObservable;
 
-  const originalSubscribe: Observable<unknown>['subscribe'] = proto.subscribe;
+  if ((proto as any).__rxjsInspectorInstalled) {
+    return;
+  }
 
-  proto.subscribe = function <T>(
-    this: Observable<T>,
-    observerOrNext?: PartialObserver<T> | ((value: T) => void),
+  const originalSubscribe = proto.subscribe;
+  (proto as any).__rxjsInspectorOriginalSubscribe = originalSubscribe;
+  (proto as any).__rxjsInspectorInstalled = true;
+
+  proto.subscribe = function patchedSubscribe(
+    this: AnyObservable,
+    observerOrNext?: any,
     error?: (err: any) => void,
     complete?: () => void,
   ): Subscription {
-    const self: any = this;
-
-    // 🔒 Skip internal inspector observables to avoid recursion / OOM
-    if (self[INTERNAL_FLAG]) {
-      return originalSubscribe.call(this, observerOrNext as any, error, complete) as Subscription;
-    }
-
     const observableId = getObservableId(this);
     const subscriptionId = nextSubscriptionId++;
 
-    // subscribe event
-    notificationSubject.next({
+    emitEvent({
       type: 'subscribe',
-      runId: RUN_ID,
       timestamp: now(),
       observableId,
       subscriptionId,
     });
 
-    const downstream = toObserver<T>(observerOrNext, error, complete);
+    // Normalize args → observer object
+    const userObserver =
+      typeof observerOrNext === 'function'
+        ? {
+            next: observerOrNext,
+            error,
+            complete,
+          }
+        : observerOrNext || {};
 
-    const wrappedObserver: PartialObserver<T> = {
-      next: (value: T) => {
-        notificationSubject.next({
-          type: 'next',
-          runId: RUN_ID,
-          timestamp: now(),
-          observableId,
-          subscriptionId,
-          value,
-        });
-        downstream.next?.(value);
+    const wrappedObserver = {
+      next: (value: unknown) => {
+        if (config.enabled && Math.random() <= (config.sampleRate ?? 1)) {
+          emitEvent({
+            type: 'next',
+            timestamp: now(),
+            observableId,
+            subscriptionId,
+            value: config.excludeValues ? '<redacted>' : value,
+          });
+        }
+        userObserver.next?.(value);
       },
-      error: (err: any) => {
-        notificationSubject.next({
+      error: (err: unknown) => {
+        emitEvent({
           type: 'error',
-          runId: RUN_ID,
           timestamp: now(),
           observableId,
           subscriptionId,
           error: err,
         });
-        downstream.error?.(err);
+        userObserver.error?.(err);
       },
       complete: () => {
-        notificationSubject.next({
+        emitEvent({
           type: 'complete',
-          runId: RUN_ID,
           timestamp: now(),
           observableId,
           subscriptionId,
         });
-        downstream.complete?.();
+        userObserver.complete?.();
       },
     };
 
-    const subscription = originalSubscribe.call(this, wrappedObserver as any) as Subscription;
+    const subscription = originalSubscribe.call(this, wrappedObserver);
 
-    (subscription as any)[SUB_ID] = subscriptionId;
-    const originalUnsubscribe = subscription.unsubscribe;
+    const originalUnsubscribe = subscription.unsubscribe.bind(subscription);
 
-    subscription.unsubscribe = function (this: Subscription): void {
-      notificationSubject.next({
+    subscription.unsubscribe = function patchedUnsubscribe() {
+      emitEvent({
         type: 'unsubscribe',
-        runId: RUN_ID,
         timestamp: now(),
         observableId,
         subscriptionId,
       });
-      return originalUnsubscribe.apply(this);
+      return originalUnsubscribe();
     };
 
     return subscription;
-  };
+  } as any;
+}
+
+export function uninstallRxjsInstrumentation(): void {
+  const proto = Observable.prototype as AnyObservable;
+  if (!proto.__rxjsInspectorInstalled) return;
+
+  if (proto.__rxjsInspectorOriginalSubscribe) {
+    proto.subscribe = proto.__rxjsInspectorOriginalSubscribe;
+  }
+
+  delete proto.__rxjsInspectorOriginalSubscribe;
+  delete proto.__rxjsInspectorInstalled;
+
+  notificationSubject.complete();
 }

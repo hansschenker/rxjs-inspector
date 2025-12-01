@@ -1,109 +1,144 @@
 // src/cli/print-log.ts
+import {
+  NotificationEvent,
+  ObservableCreateEvent,
+  PrintOptions,
+  defaultPrintOptions,
+} from '../instrumentation/types';
+import { eventsToMarbleDiagram } from '../visualization/marbleDiagram';
+import { eventsToTimelineMermaid } from '../visualization/eventsToTimelineMermaid'; // if you have this
 
-import { readFileSync } from 'node:fs';
-import * as path from 'node:path';
-
-type NotificationType = 'subscribe' | 'next' | 'error' | 'complete' | 'unsubscribe';
-
-interface NotificationEvent {
-  type: NotificationType;
-  runId?: number;              // optional for legacy events
-  timestamp: number;
-  observableId: number;
-  subscriptionId: number;
-  [key: string]: any;          // value, error, etc.
+interface OperatorNode {
+  id: number;
+  name: string;
+  parent?: number;
+  children: OperatorNode[];
 }
 
-function loadEvents(filePath: string): NotificationEvent[] {
-  const abs = path.resolve(filePath);
-  const text = readFileSync(abs, 'utf8');
-  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+export function printLog(
+  events: NotificationEvent[],
+  options: Partial<PrintOptions> = {},
+): void {
+  const opts = { ...defaultPrintOptions, ...options };
 
-  return lines.map((line) => JSON.parse(line) as NotificationEvent);
+  switch (opts.format) {
+    case 'tree':
+      printOperatorChain(events);
+      break;
+    case 'timeline':
+      printTimeline(events, opts);
+      break;
+    case 'flat':
+    default:
+      printFlat(events, opts);
+      break;
+  }
 }
 
-function printOneGroup(events: NotificationEvent[]): void {
-  if (events.length === 0) {
-    console.log('  (no events)');
-    return;
+// ---- Operator chain (tree) ----
+
+export function printOperatorChain(events: NotificationEvent[]): void {
+  const creates = events.filter(
+    (e): e is ObservableCreateEvent => e.type === 'observable-create',
+  );
+
+  const roots = buildOperatorGraph(creates);
+
+  console.log('\nOperator Chain:\n');
+  for (const root of roots) {
+    printOperatorNode(root, 0);
+  }
+}
+
+function buildOperatorGraph(
+  creates: ObservableCreateEvent[],
+): OperatorNode[] {
+  const nodes = new Map<number, OperatorNode>();
+
+  for (const evt of creates) {
+    const node: OperatorNode = {
+      id: evt.observableId,
+      name: evt.operatorInfo?.name ?? 'Unknown',
+      parent: evt.operatorInfo?.parent,
+      children: [],
+    };
+    nodes.set(node.id, node);
   }
 
-  // Group by observableId → subscriptionId
-  const byObservable = new Map<number, Map<number, NotificationEvent[]>>();
-
-  for (const evt of events) {
-    let bySub = byObservable.get(evt.observableId);
-    if (!bySub) {
-      bySub = new Map();
-      byObservable.set(evt.observableId, bySub);
-    }
-    const list = bySub.get(evt.subscriptionId) ?? [];
-    list.push(evt);
-    bySub.set(evt.subscriptionId, list);
-  }
-
-  // Compute start time for this group
-  const sortedAll = [...events].sort((a, b) => a.timestamp - b.timestamp);
-  const start = sortedAll[0]?.timestamp ?? 0;
-
-  for (const [observableId, bySub] of byObservable.entries()) {
-    console.log(`Observable ${observableId}:`);
-    for (const [subscriptionId, subEvents] of bySub.entries()) {
-      console.log(`  Subscription ${subscriptionId}:`);
-      const sorted = [...subEvents].sort((a, b) => a.timestamp - b.timestamp);
-      for (const evt of sorted) {
-        const dt = evt.timestamp - start;
-        const base = `    +${dt}ms ${evt.type.padEnd(10)}`;
-        if (evt.type === 'next' && 'value' in evt) {
-          console.log(`${base} value = ${JSON.stringify(evt.value)}`);
-        } else if (evt.type === 'error' && 'error' in evt) {
-          console.log(`${base} error = ${JSON.stringify(evt.error)}`);
-        } else {
-          console.log(base);
-        }
+  for (const node of nodes.values()) {
+    if (node.parent != null) {
+      const parent = nodes.get(node.parent);
+      if (parent) {
+        parent.children.push(node);
       }
     }
   }
+
+  return Array.from(nodes.values()).filter((n) => n.parent == null);
 }
 
-function groupAndPrint(events: NotificationEvent[]): void {
-  if (events.length === 0) {
-    console.log('No events found.');
-    return;
+function printOperatorNode(node: OperatorNode, depth: number): void {
+  const indent = '  '.repeat(depth);
+  console.log(`${indent}Observable ${node.id} (${node.name})`);
+  for (const child of node.children) {
+    printOperatorNode(child, depth + 1);
   }
+}
 
-  const legacy: NotificationEvent[] = [];
-  const byRun = new Map<number, NotificationEvent[]>();
+// ---- Flat view ----
 
-  for (const evt of events) {
-    if (typeof evt.runId === 'number') {
-      const list = byRun.get(evt.runId) ?? [];
-      list.push(evt);
-      byRun.set(evt.runId, list);
-    } else {
-      legacy.push(evt);
+function printFlat(events: NotificationEvent[], opts: PrintOptions): void {
+  const withTs = (ts: number) =>
+    opts.showTimestamps ? `[${ts}] ` : '';
+
+  for (const e of events) {
+    switch (e.type) {
+      case 'observable-create':
+        console.log(
+          `${withTs(e.timestamp)}observable-create #${e.observableId} (${e.operatorInfo?.name ?? 'Unknown'})`,
+        );
+        break;
+      case 'subscribe':
+      case 'unsubscribe':
+      case 'complete':
+        console.log(
+          `${withTs(e.timestamp)}${e.type} obs=${e.observableId} sub=${e.subscriptionId}`,
+        );
+        break;
+      case 'next': {
+        const valueStr =
+          opts.showValues && 'value' in e
+            ? ` value=${JSON.stringify(e.value)}`
+            : '';
+        console.log(
+          `${withTs(e.timestamp)}next obs=${e.observableId} sub=${e.subscriptionId}${valueStr}`,
+        );
+        break;
+      }
+      case 'error':
+        console.log(
+          `${withTs(e.timestamp)}error obs=${e.observableId} sub=${e.subscriptionId} error=${e.error}`,
+        );
+        break;
+    }
+  }
+}
+
+// ---- Timeline view (delegate to existing tools) ----
+
+function printTimeline(events: NotificationEvent[], _opts: PrintOptions): void {
+  // Example: print an ASCII marble per observable
+  const observableIds = Array.from(
+    new Set(events.map((e) => e.observableId)),
+  ).sort((a, b) => a - b);
+
+  for (const id of observableIds) {
+    const line = eventsToMarbleDiagram(events, id);
+    if (line) {
+      console.log(`obs ${id}: ${line}`);
     }
   }
 
-  // First, print legacy events (no runId)
-  if (legacy.length > 0) {
-    console.log('=== Legacy events (no runId) ===');
-    printOneGroup(legacy);
-  }
-
-  // Then, print each run with a proper header
-  const runIds = Array.from(byRun.keys()).sort((a, b) => a - b);
-  for (const runId of runIds) {
-    console.log(`\n=== Run ${runId} ===`);
-    const runEvents = byRun.get(runId)!;
-    printOneGroup(runEvents);
-  }
+  // or, alternatively, your Mermaid generator:
+  // console.log(eventsToTimelineMermaid(events));
 }
-
-function main() {
-  const fileArg = process.argv[2] ?? 'rxjs-inspector.ndjson';
-  const events = loadEvents(fileArg);
-  groupAndPrint(events);
-}
-
-main();

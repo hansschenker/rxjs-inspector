@@ -1,21 +1,32 @@
 {
   "name": "rxjs-inspector",
   "version": "0.1.0",
-  "private": true,
-  "description": "Minimal viable RxJS runtime inspector (MVP).",
+  "description": "Instrumentation, logging, and visualization tools for RxJS operator chains.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "rxjs-inspector": "dist/cli/bin.cjs",
+    "rxjs-inspector-server": "dist/web/server.cjs"
+  },
   "scripts": {
-  "inspect-log": "ts-node src/cli/print-log.ts",
-  "summarize-log": "ts-node src/cli/summarize-log.ts",
-    "build": "tsc -p tsconfig.json",
-    "simple": "ts-node src/example/simple.ts",
-     "example:debounced": "ts-node src/example/debounced-search-timeline.ts"
+    "build": "tsup",
+    "test": "vitest",
+    "dev:web": "tsx src/web/server.ts",
+    "dev:cli": "tsx src/cli/bin.ts"
   },
   "dependencies": {
-    "rxjs": "^7.8.1"
+    "express": "^4.21.0",
+    "rxjs": "^7.8.0"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
     "typescript": "^5.6.0",
-    "ts-node": "^10.9.2",
-    "@types/node": "^22.7.4"
+    "vitest": "^2.1.0"
   }
 }
