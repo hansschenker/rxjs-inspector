@@ -1,8 +1,12 @@
-const __filename = fileURLToPath(import.meta.url);
 // src/web/server.ts
 import express, { Request, Response } from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { notifications$ } from '../instrumentation/core';
 import { NotificationEvent } from '../instrumentation/types';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const clients = new Set<Response>();
@@ -20,12 +24,6 @@ app.get('/events', (req: Request, res: Response) => {
     clients.delete(res);
   });
 });
-
-// src/web/server.ts (add below app.get('/events', ...) handler)
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(__filename);
 
 app.use(express.static(path.join(__dirname, 'public')));
 

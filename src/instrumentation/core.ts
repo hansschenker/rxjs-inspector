@@ -16,7 +16,13 @@ type AnyObservable = Observable<unknown> & {
   __rxjsInspectorOriginalSubscribe?: Observable<unknown>['subscribe'];
 };
 
+// Symbol to mark internal observables (prevents infinite recursion)
+const INTERNAL_FLAG = Symbol('rxjsInspectorInternal');
+
 const notificationSubject = new Subject<NotificationEvent>();
+// Mark notification subject as internal to prevent instrumenting itself
+(notificationSubject as any)[INTERNAL_FLAG] = true;
+
 export const notifications$ = notificationSubject.asObservable();
 
 let config: InstrumentationConfig = defaultInstrumentationConfig;
@@ -35,6 +41,24 @@ const now = () => Date.now();
 function emitEvent(event: NotificationEvent): void {
   if (!config.enabled) return;
   notificationSubject.next(event);
+}
+
+// ---- Helper: Check if observable is internal ----
+
+/**
+ * Checks if an observable or any of its sources are marked as internal.
+ * Internal observables (like notifications$) should not be instrumented
+ * to prevent infinite recursion.
+ */
+function isInternalObservable(obs: AnyObservable): boolean {
+  let current: AnyObservable | undefined = obs;
+  while (current) {
+    if ((current as any)[INTERNAL_FLAG]) {
+      return true;
+    }
+    current = current.source;
+  }
+  return false;
 }
 
 // ---- Operator / observable tracking ----
@@ -93,6 +117,11 @@ export function installRxjsInstrumentation(): void {
     error?: (err: any) => void,
     complete?: () => void,
   ): Subscription {
+    // Skip instrumentation for internal observables to prevent infinite recursion
+    if (isInternalObservable(this)) {
+      return originalSubscribe.call(this, observerOrNext, error, complete);
+    }
+
     const observableId = getObservableId(this);
     const subscriptionId = nextSubscriptionId++;
 
@@ -176,5 +205,6 @@ export function uninstallRxjsInstrumentation(): void {
   delete proto.__rxjsInspectorOriginalSubscribe;
   delete proto.__rxjsInspectorInstalled;
 
-  notificationSubject.complete();
+  // Don't complete the subject - this allows reinstallation
+  // The patched subscribe won't be called anymore since we restored the original
 }
