@@ -2,9 +2,19 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { Request, Response } from 'express';
+<<<<<<< HEAD
 import { Subscription } from 'rxjs';
 import { notifications$ } from '../instrumentation/core.js';
 import { NotificationEvent } from '../instrumentation/types.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+=======
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { notifications$ } from '../instrumentation/core';
+import { NotificationEvent } from '../instrumentation/types';
+>>>>>>> 8406626071ed9079fd7929fa722f5030261bec8f
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,12 +38,15 @@ app.get('/events', (req: Request, res: Response) => {
   });
 });
 
+<<<<<<< HEAD
 // Serve the client HTML directly
 app.get('/', (_req: Request, res: Response) => {
   res.sendFile(path.join(__dirname, 'client.html'));
 });
 
 // Static files from public directory
+=======
+>>>>>>> 8406626071ed9079fd7929fa722f5030261bec8f
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Subscribe to notifications and broadcast to all SSE clients
