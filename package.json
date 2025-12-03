@@ -15,7 +15,14 @@
     "build": "tsup",
     "test": "vitest",
     "dev:web": "tsx src/web/server.ts",
-    "dev:cli": "tsx src/cli/bin.ts"
+    "dev:cli": "tsx src/cli/bin.ts",
+    "dashboard": "tsx src/web/dashboard.ts",
+    "demo:simple": "tsx src/example/simple.ts",
+    "demo:advanced": "tsx src/example/advanced-demo.ts",
+    "demo:custom": "tsx src/example/custom-operators.ts",
+    "demo:tagged": "tsx src/example/tagged-demo.ts",
+    "viz": "tsx src/tools/ndjson-visualizer.ts",
+    "viz:html": "tsx src/tools/ndjson-to-html.ts"
   },
   "dependencies": {
     "express": "^4.21.0",

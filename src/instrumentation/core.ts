@@ -64,60 +64,61 @@ function isInternalObservable(obs: AnyObservable): boolean {
 // ---- Operator / observable tracking ----
 
 function extractOperatorInfo(obs: AnyObservable): OperatorInfo {
-  let name =
-    obs.operator?.constructor?.name ||
-    // fallback to constructor name of the observable itself
-    (obs as any).constructor?.name ||
-    'Unknown';
+  // NOTE: RxJS v7+ uses anonymous functions for operators, so we must rely on stack traces
+  // The rxjs-spy technique (prototype inspection) only works for RxJS v5/v6 class-based operators
 
+  // Priority 0: Check for manual tag
+  const tag = (obs as any).__rxjsInspectorTag;
+  if (tag) {
+    return { name: tag, parent: obs.source?.__rxjsInspectorId, stackTrace: undefined };
+  }
+
+  let name = (obs as any).constructor?.name || 'Observable';
   const parent = obs.source?.__rxjsInspectorId;
 
   let stackTrace: string | undefined;
   try {
     stackTrace = new Error().stack;
 
-    // Try to extract operator name from stack trace
-    if (stackTrace && (name === 'Observable' || name === 'Function')) {
+    if (stackTrace) {
       const lines = stackTrace.split('\n');
 
-      // First priority: Look for RxJS operators in node_modules path
+      // Priority 1: Look for RxJS operators (map, filter, etc.)
       for (const line of lines) {
-        // Match: rxjs/src/internal/operators/OPERATORNAME.ts
-        const opMatch = line.match(/rxjs[\\/]src[\\/]internal[\\/]operators[\\/](\w+)\.ts/);
+        const opMatch = line.match(/rxjs[\\/](?:dist[\\/](?:cjs|esm)[\\/])?internal[\\/]operators[\\/](\w+)\.(?:js|ts)/);
         if (opMatch) {
           name = opMatch[1];
-          break;
-        }
-
-        // Match: rxjs/src/internal/observable/SOURCENAME.ts (for of, from, interval, etc.)
-        const srcMatch = line.match(/rxjs[\\/]src[\\/]internal[\\/]observable[\\/](\w+)\.ts/);
-        if (srcMatch) {
-          name = srcMatch[1];
-          break;
+          return { name, parent, stackTrace };
         }
       }
 
-      // If still generic, try to find custom operators or look at source chain
-      if (name === 'Observable' || name === 'Function') {
-        // Check if this observable has a source - if so, it might be the end of a chain
-        if ((obs as any).source) {
-          name = 'pipe'; // This is a piped observable (result of .pipe())
-        } else {
-          // Try to find custom operators or function names
-          for (const line of lines) {
-            // Skip our own instrumentation functions
-            if (line.includes('instrumentation/core.ts')) continue;
+      // Priority 2: Look for RxJS source observables (from, of, interval, etc.)
+      for (const line of lines) {
+        const srcMatch = line.match(/rxjs[\\/](?:dist[\\/](?:cjs|esm)[\\/])?internal[\\/]observable[\\/](\w+)\.(?:js|ts)/);
+        if (srcMatch) {
+          name = srcMatch[1];
+          return { name, parent, stackTrace };
+        }
+      }
 
-            // Look for named functions that aren't common system functions
-            const funcMatch = line.match(/at (\w+) \(/);
-            if (funcMatch) {
-              const funcName = funcMatch[1];
-              const ignored = ['Object', 'Module', 'Function', 'Observable', 'SafeSubscriber', 'Subscriber', 'ModuleJob', 'async', 'extractOperatorInfo', 'getObservableId', 'patchedSubscribe'];
-              if (!ignored.includes(funcName)) {
-                name = funcName;
-                break;
-              }
-            }
+      // Priority 3: Check if this is a piped observable (has source but no operator match)
+      if ((obs as any).source && name === 'Observable') {
+        name = 'pipe';
+        return { name, parent, stackTrace };
+      }
+
+      // Priority 4: Look for custom operators in user code
+      for (const line of lines) {
+        if (line.includes('instrumentation/core.ts')) continue;
+        if (line.includes('node_modules')) continue;
+
+        const funcMatch = line.match(/at (\w+)/);
+        if (funcMatch) {
+          const funcName = funcMatch[1];
+          const ignored = ['Object', 'Module', 'Function', 'Observable', 'Subscriber', 'SafeSubscriber'];
+          if (!ignored.includes(funcName)) {
+            name = funcName;
+            return { name, parent, stackTrace };
           }
         }
       }
