@@ -1,23 +1,22 @@
 // src/web/server.ts
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import express, { Request, Response } from 'express';
-<<<<<<< HEAD
-import { Subscription } from 'rxjs';
-import { notifications$ } from '../instrumentation/core.js';
-import { NotificationEvent } from '../instrumentation/types.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-=======
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import express, { Request, Response } from 'express';
+import { Subscription } from 'rxjs';
+// import { fileURLToPath } from 'node:url';
 import { notifications$ } from '../instrumentation/core';
 import { NotificationEvent } from '../instrumentation/types';
->>>>>>> 8406626071ed9079fd7929fa722f5030261bec8f
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
+
+
+// Use CommonJS __filename and __dirname for compatibility with non-ESM modules
+// If using CommonJS, these are available globally.
+declare const __filename: string;
+declare const __dirname: string;
+
+
 
 const app = express();
 const clients = new Set<Response>();
@@ -38,15 +37,14 @@ app.get('/events', (req: Request, res: Response) => {
   });
 });
 
-<<<<<<< HEAD
+
 // Serve the client HTML directly
 app.get('/', (_req: Request, res: Response) => {
   res.sendFile(path.join(__dirname, 'client.html'));
 });
 
 // Static files from public directory
-=======
->>>>>>> 8406626071ed9079fd7929fa722f5030261bec8f
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Subscribe to notifications and broadcast to all SSE clients

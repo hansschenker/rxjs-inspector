@@ -1,4 +1,10 @@
 import { NotificationEvent } from '../instrumentation/types.js';
+import { OperatorInfo } from '../instrumentation/types.js';
+
+// Helper to read a label/name from operator info if present
+export function formatOperatorLabel(info?: OperatorInfo): string | undefined {
+  return info?.name;
+}
 
 /**
  * Filter events to only include those with observableId <= maxId.

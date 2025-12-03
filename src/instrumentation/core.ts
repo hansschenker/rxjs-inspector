@@ -7,6 +7,7 @@ import {
   NotificationEvent,
   OperatorInfo,
 } from './types.js';
+import { INSPECTOR_LABEL } from './tag.js';
 
 type AnyObservable = Observable<unknown> & {
   __rxjsInspectorId?: number;
@@ -61,17 +62,25 @@ function isInternalObservable(obs: AnyObservable): boolean {
 // ---- Operator / observable tracking ----
 
 function extractOperatorInfo(obs: AnyObservable): OperatorInfo {
-  // NOTE: RxJS v7+ uses anonymous functions for operators, so we must rely on stack traces
-  // The rxjs-spy technique (prototype inspection) only works for RxJS v5/v6 class-based operators
+  const label = (obs as any)[INSPECTOR_LABEL] as string | undefined;
+  const manualTag = (obs as any).__rxjsInspectorTag as string | undefined;
+  let name =
+    label ||
+    manualTag ||
+    obs.operator?.constructor?.name ||
+    (obs as any).constructor?.name ||
+    'Unknown';
 
-  // Priority 0: Check for manual tag
-  const tag = (obs as any).__rxjsInspectorTag;
-  if (tag) {
-    return { name: tag, parent: obs.source?.__rxjsInspectorId, stackTrace: undefined };
+  // Ensure the parent observable is assigned an id so relationships are captured
+  let parent: number | undefined = obs.source?.__rxjsInspectorId;
+  if (obs.source && !isInternalObservable(obs.source)) {
+    parent = getObservableId(obs.source);
   }
 
-  let name = (obs as any).constructor?.name || 'Observable';
-  const parent = obs.source?.__rxjsInspectorId;
+  // If we have an explicit label/tag, we can return early
+  if (label || manualTag) {
+    return { name, parent, stackTrace: undefined };
+  }
 
   let stackTrace: string | undefined;
   try {
@@ -238,8 +247,6 @@ export function installRxjsInstrumentation(): void {
         subscriptionId,
       });
       return originalUnsubscribe();
-
-
     };
 
     return subscription;
