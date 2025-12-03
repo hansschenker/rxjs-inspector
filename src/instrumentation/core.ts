@@ -16,10 +16,6 @@ type AnyObservable = Observable<unknown> & {
   __rxjsInspectorOriginalSubscribe?: Observable<unknown>['subscribe'];
 };
 
-<<<<<<< HEAD
-let notificationSubject = new Subject<NotificationEvent>();
-export let notifications$ = notificationSubject.asObservable();
-=======
 // Symbol to mark internal observables (prevents infinite recursion)
 const INTERNAL_FLAG = Symbol('rxjsInspectorInternal');
 
@@ -28,7 +24,6 @@ const notificationSubject = new Subject<NotificationEvent>();
 (notificationSubject as any)[INTERNAL_FLAG] = true;
 
 export const notifications$ = notificationSubject.asObservable();
->>>>>>> 8406626071ed9079fd7929fa722f5030261bec8f
 
 let config: InstrumentationConfig = defaultInstrumentationConfig;
 
@@ -69,7 +64,7 @@ function isInternalObservable(obs: AnyObservable): boolean {
 // ---- Operator / observable tracking ----
 
 function extractOperatorInfo(obs: AnyObservable): OperatorInfo {
-  const name =
+  let name =
     obs.operator?.constructor?.name ||
     // fallback to constructor name of the observable itself
     (obs as any).constructor?.name ||
@@ -80,6 +75,53 @@ function extractOperatorInfo(obs: AnyObservable): OperatorInfo {
   let stackTrace: string | undefined;
   try {
     stackTrace = new Error().stack;
+
+    // Try to extract operator name from stack trace
+    if (stackTrace && (name === 'Observable' || name === 'Function')) {
+      const lines = stackTrace.split('\n');
+
+      // First priority: Look for RxJS operators in node_modules path
+      for (const line of lines) {
+        // Match: rxjs/src/internal/operators/OPERATORNAME.ts
+        const opMatch = line.match(/rxjs[\\/]src[\\/]internal[\\/]operators[\\/](\w+)\.ts/);
+        if (opMatch) {
+          name = opMatch[1];
+          break;
+        }
+
+        // Match: rxjs/src/internal/observable/SOURCENAME.ts (for of, from, interval, etc.)
+        const srcMatch = line.match(/rxjs[\\/]src[\\/]internal[\\/]observable[\\/](\w+)\.ts/);
+        if (srcMatch) {
+          name = srcMatch[1];
+          break;
+        }
+      }
+
+      // If still generic, try to find custom operators or look at source chain
+      if (name === 'Observable' || name === 'Function') {
+        // Check if this observable has a source - if so, it might be the end of a chain
+        if ((obs as any).source) {
+          name = 'pipe'; // This is a piped observable (result of .pipe())
+        } else {
+          // Try to find custom operators or function names
+          for (const line of lines) {
+            // Skip our own instrumentation functions
+            if (line.includes('instrumentation/core.ts')) continue;
+
+            // Look for named functions that aren't common system functions
+            const funcMatch = line.match(/at (\w+) \(/);
+            if (funcMatch) {
+              const funcName = funcMatch[1];
+              const ignored = ['Object', 'Module', 'Function', 'Observable', 'SafeSubscriber', 'Subscriber', 'ModuleJob', 'async', 'extractOperatorInfo', 'getObservableId', 'patchedSubscribe'];
+              if (!ignored.includes(funcName)) {
+                name = funcName;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
   } catch {
     // ignore
   }
@@ -90,6 +132,11 @@ function extractOperatorInfo(obs: AnyObservable): OperatorInfo {
 function getObservableId(obs: AnyObservable): number {
   if (!obs.__rxjsInspectorId) {
     obs.__rxjsInspectorId = nextObservableId++;
+
+    // Ensure the source observable has an ID first (if it exists)
+    if (obs.source && !obs.source.__rxjsInspectorId) {
+      getObservableId(obs.source);
+    }
 
     const operatorInfo = extractOperatorInfo(obs);
 
@@ -210,21 +257,6 @@ export function uninstallRxjsInstrumentation(): void {
   delete proto.__rxjsInspectorOriginalSubscribe;
   delete proto.__rxjsInspectorInstalled;
 
-<<<<<<< HEAD
-  // Don't complete - just create a fresh subject for potential reinstall
-  notificationSubject = new Subject<NotificationEvent>();
-  notifications$ = notificationSubject.asObservable();
-}
-
-/**
- * Reset observable and subscription ID counters.
- * Useful for test isolation.
- */
-export function resetInstrumentation(): void {
-  nextObservableId = 1;
-  nextSubscriptionId = 1;
-=======
   // Don't complete the subject - this allows reinstallation
   // The patched subscribe won't be called anymore since we restored the original
->>>>>>> 8406626071ed9079fd7929fa722f5030261bec8f
 }
