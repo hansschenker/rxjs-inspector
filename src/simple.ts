@@ -1,27 +1,23 @@
-// src/simple.ts
-// Simple demo of RxJS Inspector instrumentation
-
-// 1) Side-effect import: starts NDJSON logging to rxjs-inspector.ndjson
-import './node/ndjson-logger.js';
-
 import { of } from 'rxjs';
 import { map } from 'rxjs/operators';
+// src/simple.ts
 
-// 2) Import instrumentation (and optionally notifications$ for debugging)
-import { installRxjsInstrumentation, notifications$ } from './instrumentation/core.js';
+// 1) Start NDJSON logging (side effect import)
+// ndjson-logger.ts is in src/node/
+import './node/ndjson-logger';
 
-// 3) Install instrumentation BEFORE any subscriptions
+// 2) Install Rxjs-Inspector instrumentation
+// core.ts is in src/instrumentation/
+import { installRxjsInstrumentation } from './instrumentation/core';
+
 installRxjsInstrumentation();
 
-// 4) Debug: log inspector events to console
-notifications$.subscribe((evt) => {
-  console.log('[INSPECTOR EVENT]', evt);
-});
 
-// 5) Your demo observable
-of(1, 2, 3)
-  .pipe(map((x: number) => x * 10))
+console.log('--- simple.ts: Rxjs-Inspector demo ---');
+
+of(5, 6, 7, 8, 9)
+  .pipe(map((x) => x * 10))
   .subscribe({
-    next: (value) => console.log('value:', value),
-    complete: () => console.log('complete'),
+    next: (value) => console.log('RESULT', value),
+    complete: () => console.log('RESULT complete'),
   });

@@ -15,22 +15,14 @@ type AnyObservable = Observable<unknown> & {
   __rxjsInspectorInstalled?: boolean;
   __rxjsInspectorOriginalSubscribe?: Observable<unknown>['subscribe'];
 };
-
-<<<<<<< HEAD
-let notificationSubject = new Subject<NotificationEvent>();
-export let notifications$ = notificationSubject.asObservable();
-=======
-// Symbol to mark internal observables (prevents infinite recursion)
-const INTERNAL_FLAG = Symbol('rxjsInspectorInternal');
-
-const notificationSubject = new Subject<NotificationEvent>();
-// Mark notification subject as internal to prevent instrumenting itself
-(notificationSubject as any)[INTERNAL_FLAG] = true;
-
-export const notifications$ = notificationSubject.asObservable();
->>>>>>> 8406626071ed9079fd7929fa722f5030261bec8f
-
+export const INTERNAL_FLAG = Symbol('__rxjsInspectorInternal');
 let config: InstrumentationConfig = defaultInstrumentationConfig;
+
+let notificationSubject = new Subject<NotificationEvent>();
+export const notifications$ = notificationSubject.asObservable().pipe(
+  // Mark as internal to prevent instrumentation
+) as any;
+(notifications$ as any)[INTERNAL_FLAG] = true;
 
 export function configureInstrumentation(
   opts: Partial<InstrumentationConfig>,
@@ -193,38 +185,11 @@ export function installRxjsInstrumentation(): void {
         subscriptionId,
       });
       return originalUnsubscribe();
+
+
     };
 
     return subscription;
-  } as any;
+  };
 }
 
-export function uninstallRxjsInstrumentation(): void {
-  const proto = Observable.prototype as AnyObservable;
-  if (!proto.__rxjsInspectorInstalled) return;
-
-  if (proto.__rxjsInspectorOriginalSubscribe) {
-    proto.subscribe = proto.__rxjsInspectorOriginalSubscribe;
-  }
-
-  delete proto.__rxjsInspectorOriginalSubscribe;
-  delete proto.__rxjsInspectorInstalled;
-
-<<<<<<< HEAD
-  // Don't complete - just create a fresh subject for potential reinstall
-  notificationSubject = new Subject<NotificationEvent>();
-  notifications$ = notificationSubject.asObservable();
-}
-
-/**
- * Reset observable and subscription ID counters.
- * Useful for test isolation.
- */
-export function resetInstrumentation(): void {
-  nextObservableId = 1;
-  nextSubscriptionId = 1;
-=======
-  // Don't complete the subject - this allows reinstallation
-  // The patched subscribe won't be called anymore since we restored the original
->>>>>>> 8406626071ed9079fd7929fa722f5030261bec8f
-}
