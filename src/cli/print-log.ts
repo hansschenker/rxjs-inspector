@@ -4,9 +4,8 @@ import {
   ObservableCreateEvent,
   PrintOptions,
   defaultPrintOptions,
-} from '../instrumentation/types';
-import { eventsToMarbleDiagram } from '../visualization/marbleDiagram';
-import { eventsToTimelineMermaid } from '../visualization/eventsToTimelineMermaid'; // if you have this
+} from '../instrumentation/types.js';
+import { eventsToMarbleDiagram } from '../visualization/marbleDiagram.js';
 
 interface OperatorNode {
   id: number;

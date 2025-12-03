@@ -1,6 +1,6 @@
 import { from, map, filter } from 'rxjs';
 import { createWriteStream } from 'node:fs';
-import { installRxjsInstrumentation, notifications$ } from '../instrumentation/core';
+import { installRxjsInstrumentation, notifications$ } from '../instrumentation/core.js';
 
 // Install the RxJS Inspector monkey patch
 installRxjsInstrumentation();
@@ -15,8 +15,8 @@ notifications$.subscribe(evt => {
 
 // Example pipeline under inspection
 const result$ = from([1, 2, 3, 4, 5, 6, 7, 8, 9]).pipe(
-  map(n => n * 10),
-  filter(n => n > 40),
+  map((n: number) => n * 10),
+  filter((n: number) => n > 40),
 );
 
 result$.subscribe({

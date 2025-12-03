@@ -1,12 +1,19 @@
-const __filename = fileURLToPath(import.meta.url);
 // src/web/server.ts
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express, { Request, Response } from 'express';
-import { notifications$ } from '../instrumentation/core';
-import { NotificationEvent } from '../instrumentation/types';
+import { Subscription } from 'rxjs';
+import { notifications$ } from '../instrumentation/core.js';
+import { NotificationEvent } from '../instrumentation/types.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const clients = new Set<Response>();
+let notificationSub: Subscription | null = null;
 
+// SSE endpoint for real-time events
 app.get('/events', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -21,19 +28,16 @@ app.get('/events', (req: Request, res: Response) => {
   });
 });
 
-// src/web/server.ts (add below app.get('/events', ...) handler)
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Serve the client HTML directly
+app.get('/', (_req: Request, res: Response) => {
+  res.sendFile(path.join(__dirname, 'client.html'));
+});
 
-const __dirname = path.dirname(__filename);
-
+// Static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Place client.html in src/web/public/index.html (built or copied to dist/web/public)
-
-
-
-notifications$.subscribe((event: NotificationEvent) => {
+// Subscribe to notifications and broadcast to all SSE clients
+notificationSub = notifications$.subscribe((event: NotificationEvent) => {
   const data = `data: ${JSON.stringify(event)}\n\n`;
   for (const client of clients) {
     client.write(data);
@@ -42,8 +46,31 @@ notifications$.subscribe((event: NotificationEvent) => {
 
 const port = Number(process.env.PORT ?? 3000);
 
-app.listen(port, () => {
-  console.log(
-    `Rxjs-Inspector SSE server listening on http://localhost:${port}/events`,
-  );
+const server = app.listen(port, () => {
+  console.log(`RxJS Inspector server running at http://localhost:${port}`);
+  console.log(`  - Dashboard: http://localhost:${port}/`);
+  console.log(`  - SSE stream: http://localhost:${port}/events`);
 });
+
+// Graceful shutdown
+function shutdown(): void {
+  console.log('\nShutting down RxJS Inspector server...');
+  
+  // Close all SSE connections
+  for (const client of clients) {
+    client.end();
+  }
+  clients.clear();
+  
+  // Unsubscribe from notifications
+  notificationSub?.unsubscribe();
+  
+  // Close the HTTP server
+  server.close(() => {
+    console.log('Server closed.');
+    process.exit(0);
+  });
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

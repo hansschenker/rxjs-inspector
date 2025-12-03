@@ -1,10 +1,13 @@
 // src/visualization/marbleDiagram.ts
-import { NotificationEvent } from '../instrumentation/types';
+import { NotificationEvent } from '../instrumentation/types.js';
+
+/** Characters per second for marble diagram scaling */
+const DEFAULT_SCALE = 50;
 
 export function eventsToMarbleDiagram(
   events: NotificationEvent[],
   observableId: number,
-  scale = 50, // characters per second
+  scale = DEFAULT_SCALE,
 ): string {
   const obsEvents = events.filter((e) => e.observableId === observableId);
   if (!obsEvents.length) return '';

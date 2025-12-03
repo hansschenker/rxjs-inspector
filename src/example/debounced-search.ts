@@ -4,7 +4,7 @@
 
 import { debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
 import { Observable, of } from 'rxjs';
-import { installRxjsInstrumentation, notifications$ } from '../instrumentation/core';
+import { installRxjsInstrumentation, notifications$ } from '../instrumentation/core.js';
 
 installRxjsInstrumentation();
 

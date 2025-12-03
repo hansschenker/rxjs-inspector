@@ -1,5 +1,15 @@
 
-import { NotificationEvent } from '../instrumentation/types';
+import {
+  NotificationEvent,
+  NextEvent,
+  ErrorEvent,
+  ObservableCreateEvent,
+} from '../instrumentation/types.js';
+
+/** Helper to safely get subscriptionId from events that may not have it */
+function getSubscriptionId(e: NotificationEvent): number {
+  return 'subscriptionId' in e ? e.subscriptionId : 0;
+}
 
 const TICK_MS = 100;      // 100ms per tick
 const MAX_TICKS = 7;      // 0..7 -> 0.000..0.700 seconds
@@ -41,7 +51,7 @@ export function eventsToTimelineMermaid(
     if (ta !== 0) return ta;
     const oa = a.observableId - b.observableId;
     if (oa !== 0) return oa;
-    const sa = (a.subscriptionId ?? 0) - (b.subscriptionId ?? 0);
+    const sa = getSubscriptionId(a) - getSubscriptionId(b);
     return sa;
   });
 
@@ -86,7 +96,7 @@ function toDocEvents(bucket: NotificationEvent[]): DocEvent[] {
   const groups = new Map<string, NotificationEvent[]>();
 
   for (const e of bucket) {
-    const key = `${e.observableId}:${e.subscriptionId ?? 0}`;
+    const key = `${e.observableId}:${getSubscriptionId(e)}`;
     const arr = groups.get(key) ?? [];
     arr.push(e);
     groups.set(key, arr);
@@ -146,8 +156,7 @@ function toDocEvents(bucket: NotificationEvent[]): DocEvent[] {
   doc.sort((a, b) => {
     const oa = a.event.observableId - b.event.observableId;
     if (oa !== 0) return oa;
-    const sa =
-      (a.event.subscriptionId ?? 0) - (b.event.subscriptionId ?? 0);
+    const sa = getSubscriptionId(a.event) - getSubscriptionId(b.event);
     if (sa !== 0) return sa;
     return kindOrder(a.kind) - kindOrder(b.kind);
   });
@@ -194,17 +203,25 @@ function kindOrder(kind: DocKind): number {
 function formatDocEventText(d: DocEvent): string {
   const e = d.event;
   const obs = `obs${e.observableId}`;
-  const sub = e.subscriptionId != null ? ` (sub${e.subscriptionId})` : '';
+  const subId = getSubscriptionId(e);
+  const sub = subId > 0 ? ` (sub${subId})` : '';
 
   switch (d.kind) {
-    case 'created':
-      return `${obs} created${infoSuffix(e.info)}`;
+    case 'created': {
+      const createEvt = e as ObservableCreateEvent;
+      const info = createEvt.operatorInfo?.name;
+      return `${obs} created${infoSuffix(info)}`;
+    }
     case 'subscribed':
       return `${obs} subscribed${sub}`;
-    case 'next':
-      return `${obs} next ${shortValue(e.value)}${sub}`;
-    case 'error':
-      return `${obs} error ${shortValue(e.error)}${sub}`;
+    case 'next': {
+      const nextEvt = e as NextEvent;
+      return `${obs} next ${shortValue(nextEvt.value)}${sub}`;
+    }
+    case 'error': {
+      const errorEvt = e as ErrorEvent;
+      return `${obs} error ${shortValue(errorEvt.error)}${sub}`;
+    }
     case 'complete':
       return `${obs} complete${sub}`;
     case 'unsubscribed':

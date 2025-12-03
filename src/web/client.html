@@ -256,3 +256,9 @@
         const evt = JSON.parse(msg.data);
         handleEvent(evt);
       } catch (err) {
+        console.error('Failed to parse event:', err);
+      }
+    };
+  </script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 // src/example/debounced-search-timeline.ts
+// Demonstrates RxJS Inspector with a debounced search pipeline
 
 import { Subject, of } from 'rxjs';
 import {
@@ -12,45 +13,9 @@ import {
 import {
   installRxjsInstrumentation,
   notifications$,
-  NotificationEvent,
-} from '../instrumentation/core';
-import { eventsToTimelineMermaid } from '../visualization/eventsToTimelineMermaid';
-
-
-import { filterByMaxObservableId } from '../visualization/filter';
-finalize(() => {
-  // Keep only obs1..5 for a cleaner, doc-friendly timeline
-  const interesting = filterByMaxObservableId(recorded, 5);
-
-  const mermaid = eventsToTimelineMermaid(
-    interesting,
-    'RxJS Debounced Search Operator Chain',
-  );
-
-  console.log('\n=== RxJS Inspector – Debounced Search Timeline ===\n');
-  console.log(mermaid);
-  console.log('\n=== end timeline ===\n');
-
-  eventsSub.unsubscribe();
-}),
-// ...
-
-// finalize(() => {
-//   // Keep only obs1..5 for a cleaner, doc-friendly timeline
-//   const interesting = filterByMaxObservableId(recorded, 5);
-
-//   const mermaid = eventsToTimelineMermaid(
-//     interesting,
-//     'RxJS Debounced Search Operator Chain',
-//   );
-
-//   console.log('\n=== RxJS Inspector – Debounced Search Timeline ===\n');
-//   console.log(mermaid);
-//   console.log('\n=== end timeline ===\n');
-
-//   eventsSub.unsubscribe();
-// }),
-
+} from '../instrumentation/core.js';
+import { NotificationEvent } from '../instrumentation/types.js';
+import { eventsToTimelineMermaid } from '../visualization/eventsToTimelineMermaid.js';
 
 // --- 1. Install instrumentation ------------------------------------------------
 

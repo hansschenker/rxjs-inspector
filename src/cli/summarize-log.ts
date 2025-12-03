@@ -2,17 +2,12 @@
 
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { NotificationEvent } from '../instrumentation/types.js';
 
-type NotificationType = 'subscribe' | 'next' | 'error' | 'complete' | 'unsubscribe';
-
-interface NotificationEvent {
-  type: NotificationType;
-  runId?: number;              // optional for legacy events
-  timestamp: number;
-  observableId: number;
-  subscriptionId: number;
-  [key: string]: any;          // value, error, etc.
-}
+// Extended event type with optional runId for grouping
+type ExtendedNotificationEvent = NotificationEvent & {
+  runId?: number;
+};
 
 interface ObservableSummary {
   observableId: number;
@@ -26,12 +21,12 @@ interface ObservableSummary {
   lastTimestamp: number | null;
 }
 
-function loadEvents(filePath: string): NotificationEvent[] {
+function loadEvents(filePath: string): ExtendedNotificationEvent[] {
   const abs = path.resolve(filePath);
   const text = readFileSync(abs, 'utf8');
   const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
 
-  return lines.map((line) => JSON.parse(line) as NotificationEvent);
+  return lines.map((line) => JSON.parse(line) as ExtendedNotificationEvent);
 }
 
 function buildSummary(events: NotificationEvent[]): Map<number, ObservableSummary> {
@@ -156,14 +151,14 @@ function summarizeRun(runLabel: string, events: NotificationEvent[]): void {
   }
 }
 
-function groupAndSummarize(events: NotificationEvent[]): void {
+function groupAndSummarize(events: ExtendedNotificationEvent[]): void {
   if (events.length === 0) {
     console.log('No events found.');
     return;
   }
 
-  const legacy: NotificationEvent[] = [];
-  const byRun = new Map<number, NotificationEvent[]>();
+  const legacy: ExtendedNotificationEvent[] = [];
+  const byRun = new Map<number, ExtendedNotificationEvent[]>();
 
   for (const evt of events) {
     if (typeof evt.runId === 'number') {

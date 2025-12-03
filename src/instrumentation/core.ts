@@ -6,7 +6,7 @@ import {
   InstrumentationConfig,
   NotificationEvent,
   OperatorInfo,
-} from './types';
+} from './types.js';
 
 type AnyObservable = Observable<unknown> & {
   __rxjsInspectorId?: number;
@@ -16,8 +16,8 @@ type AnyObservable = Observable<unknown> & {
   __rxjsInspectorOriginalSubscribe?: Observable<unknown>['subscribe'];
 };
 
-const notificationSubject = new Subject<NotificationEvent>();
-export const notifications$ = notificationSubject.asObservable();
+let notificationSubject = new Subject<NotificationEvent>();
+export let notifications$ = notificationSubject.asObservable();
 
 let config: InstrumentationConfig = defaultInstrumentationConfig;
 
@@ -147,7 +147,7 @@ export function installRxjsInstrumentation(): void {
       },
     };
 
-    const subscription = originalSubscribe.call(this, wrappedObserver);
+    const subscription = originalSubscribe.call(this, wrappedObserver as any);
 
     const originalUnsubscribe = subscription.unsubscribe.bind(subscription);
 
@@ -176,5 +176,16 @@ export function uninstallRxjsInstrumentation(): void {
   delete proto.__rxjsInspectorOriginalSubscribe;
   delete proto.__rxjsInspectorInstalled;
 
-  notificationSubject.complete();
+  // Don't complete - just create a fresh subject for potential reinstall
+  notificationSubject = new Subject<NotificationEvent>();
+  notifications$ = notificationSubject.asObservable();
+}
+
+/**
+ * Reset observable and subscription ID counters.
+ * Useful for test isolation.
+ */
+export function resetInstrumentation(): void {
+  nextObservableId = 1;
+  nextSubscriptionId = 1;
 }
