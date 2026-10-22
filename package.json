@@ -1,0 +1,39 @@
+{
+  "name": "@hansschenker/rxjs-inspector",
+  "version": "0.1.0",
+  "description": "Record and inspect RxJS 7.8.2 subscription executions, values, cancellation, and operator decisions.",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" },
+    "./viewer": { "types": "./dist/viewer.d.ts", "import": "./dist/viewer.js", "default": "./dist/viewer.js" }
+  },
+  "files": ["dist", "src", "docs", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test --test-isolation=none test/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build",
+    "demo": "node scripts/demo.mjs",
+    "example": "node --import tsx examples/record-search.ts",
+    "prepack": "npm run build",
+    "prepare": "npm run build"
+  },
+  "peerDependencies": { "rxjs": "7.8.2" },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "linkedom": "^0.18.0",
+    "rxjs": "7.8.2",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": { "node": ">=22.8" },
+  "repository": { "type": "git", "url": "git+https://github.com/hansschenker/rxjs-inspector.git" },
+  "homepage": "https://github.com/hansschenker/rxjs-inspector#readme",
+  "bugs": { "url": "https://github.com/hansschenker/rxjs-inspector/issues" },
+  "license": "MIT",
+  "keywords": ["rxjs", "inspector", "debugger", "observable", "trace", "functional-reactive-programming"]
+}

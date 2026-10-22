@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.demo/
+coverage/
+*.tgz
+search-trace.json
+test-results/
+playwright-report/
+.package-test-*/

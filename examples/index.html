@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>RxJS Inspector · recorded execution</title>
+  <style>
+    :root{color-scheme:light dark;font:16px/1.5 system-ui,sans-serif;background:light-dark(#edf1f6,#10151c);color:light-dark(#24334a,#e8eef7)}
+    *{box-sizing:border-box}body{margin:0}main{max-width:1160px;margin:0 auto;padding:32px 24px 48px}h1{font-size:28px;line-height:1.2;font-weight:600;margin:0 0 10px}p{margin:0}.intro{max-width:760px;color:light-dark(#506077,#aebed2)}.top{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:10px}a{color:light-dark(#315c99,#a6c7f4);text-underline-offset:3px}.scenario{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:24px 0 12px}.scenario label{display:grid;gap:5px;font-size:13px;color:light-dark(#506077,#aebed2);flex:1 1 280px;max-width:580px}.scenario select,.scenario button{font:inherit;background:light-dark(#fff,#222b38);color:light-dark(#24334a,#e8eef7);border:1px solid light-dark(#c7d2e2,#40516a);border-radius:6px;padding:9px 12px;min-height:42px}.scenario select{width:100%}.scenario button{cursor:pointer}.scenario select:focus-visible,.scenario button:focus-visible{outline:2px solid light-dark(#3565a4,#8cb4ed);outline-offset:3px}#scenario-description{font-size:14px;color:light-dark(#506077,#aebed2);min-height:42px;max-width:850px;margin-bottom:18px}.footer{font-size:12px;color:light-dark(#506077,#aebed2);margin-top:18px}code{font-family:ui-monospace,Consolas,monospace;font-size:.92em}@media(max-width:620px){main{padding:24px 12px}h1{font-size:24px}.scenario{align-items:stretch}.scenario label{max-width:none}.scenario select{font-size:16px}}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="top"><h1>Explore an RxJS execution</h1><a href="https://github.com/hansschenker/rxjs-inspector">GitHub repository</a></div>
+    <p class="intro">Follow values, subscription lifetimes, and operator decisions through recorded history. Each example runs against RxJS 7.8.2 with an explicit virtual clock.</p>
+    <div class="scenario">
+      <label for="scenario">Controlled example
+        <select id="scenario">
+          <option value="switchMap">switchMap · latest search wins</option>
+          <option value="independent">Two consumers · independent cold executions</option>
+          <option value="shared">Two consumers · explicitly shared source</option>
+          <option value="error">Inner error · propagation and disposal</option>
+          <option value="unsubscribe">Unsubscribe · consumer ends execution</option>
+        </select>
+      </label>
+      <button id="record-again" type="button">Record again</button>
+    </div>
+    <p id="scenario-description"></p>
+    <div id="inspector"></div>
+    <p class="footer">“Record again” executes a fresh fixture. The inspector's navigation only reads the recording. JSON files stay in your browser; opening or exporting a trace makes no network request.</p>
+  </main>
+  <script type="module" src="/demo.js"></script>
+</body>
+</html>
