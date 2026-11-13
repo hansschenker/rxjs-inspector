@@ -26,6 +26,8 @@ The [subscription graph guide](SUBSCRIPTION_GRAPH.md) describes the public API a
 
 ## Next: more explanation models
 
+Start with the [tested map explanation development brief](TESTED_MAP_EXPLANATION.md): one complete increment spanning the real-operator adapter, pure historical analysis, viewer presentation, and parity tests. Its proposed APIs and acceptance checklist describe work to implement, not completed functionality.
+
 Add map/filter/scan/take and the remaining flattening policies. Preserve the distinction between generic operator policy and named domain function. Every state model needs supported-capture requirements, an unavailable state, and tests against real RxJS 7.8.2 behavior.
 
 For mergeMap show overlap and configured concurrency; concatMap shows pending outer inputs; exhaustMap shows accepted versus ignored inputs. Models must preserve observed reentrancy rather than assuming idealized atomic reactions.

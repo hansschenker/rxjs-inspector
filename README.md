@@ -221,6 +221,7 @@ Recorded events are observations. The `switchMap` panel is **reconstructed state
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Stable labels and the subscription graph](docs/SUBSCRIPTION_GRAPH.md)
+- [Next development target: tested map explanation](docs/TESTED_MAP_EXPLANATION.md)
 - [Trace format and event semantics](docs/TRACE_FORMAT.md)
 - [Development roadmap](docs/ROADMAP.md)
 - [Project conventions](AGENTS.md)
