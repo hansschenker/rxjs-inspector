@@ -1,6 +1,6 @@
 {
   "name": "@hansschenker/rxjs-inspector",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Record and inspect RxJS 7.8.2 subscription executions, values, cancellation, and operator decisions.",
   "type": "module",
   "sideEffects": false,

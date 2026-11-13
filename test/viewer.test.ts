@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { parseHTML } from 'linkedom';
 import { mountInspector } from '../src/viewer.js';
 import { getExecutions } from '../src/analysis.js';
+import { getSubscriptionGraph } from '../src/subscription-graph.js';
 import { createDemoTrace } from '../examples/demo.js';
 import type { Trace, TraceEvent } from '../src/types.js';
 
@@ -28,6 +29,31 @@ function fixture(): Trace {
     clock: { name: 'Test clock', kind: 'virtual', unit: 'ms' },
     nodes: [{ id: 'latest', label: 'switchMap', kind: 'operator', operator: 'switchMap', domain: 'loadResult$' }, { id: 'results', label: 'results$', kind: 'sink' }],
     edges: [{ from: 'latest', to: 'results' }], events,
+    capture: { maxEvents: 100, totalEvents: events.length, droppedEvents: 0, complete: true },
+  };
+}
+
+function subscriptionFixture(): Trace {
+  const events: TraceEvent[] = [
+    { seq: 1, time: 0, nodeId: 'consumer-a', executionId: 'consumer-a-1', role: 'boundary', port: 'output', kind: 'subscribe' },
+    { seq: 2, time: 0, nodeId: 'shared', executionId: 'connection-1', role: 'connection', port: 'output', kind: 'subscribe' },
+    { seq: 3, time: 0, nodeId: 'shared', executionId: 'connection-1', role: 'connection', port: 'output', kind: 'link', link: { kind: 'shared', sourceExecutionId: 'connection-1', destinationExecutionId: 'consumer-a-1' } },
+    { seq: 4, time: 5, nodeId: 'consumer-b', executionId: 'consumer-b-1', role: 'boundary', port: 'output', kind: 'subscribe' },
+    { seq: 5, time: 5, nodeId: 'shared', executionId: 'connection-1', role: 'connection', port: 'output', kind: 'link', link: { kind: 'shared', sourceExecutionId: 'connection-1', destinationExecutionId: 'consumer-b-1' } },
+    { seq: 6, time: 15, nodeId: 'consumer-a', executionId: 'consumer-a-1', role: 'boundary', port: 'output', kind: 'unsubscribe' },
+    { seq: 7, time: 25, nodeId: 'shared', executionId: 'connection-1', role: 'connection', port: 'output', kind: 'next', value: { status: 'captured', data: 'Still connected' } },
+    { seq: 8, time: 35, nodeId: 'consumer-b', executionId: 'consumer-b-1', role: 'boundary', port: 'output', kind: 'unsubscribe' },
+    { seq: 9, time: 35, nodeId: 'shared', executionId: 'connection-1', role: 'connection', port: 'output', kind: 'unsubscribe' },
+  ];
+  return {
+    schemaVersion: 2, name: 'Shared subscription graph', rxjsBaseline: '7.8.2',
+    clock: { name: 'Test clock', kind: 'virtual', unit: 'ms' },
+    nodes: [
+      { id: 'shared', label: 'Shared packages', kind: 'operator', operator: 'share' },
+      { id: 'consumer-a', label: 'Consumer A', kind: 'sink' },
+      { id: 'consumer-b', label: 'Consumer B', kind: 'sink' },
+    ],
+    edges: [{ from: 'shared', to: 'consumer-a' }, { from: 'shared', to: 'consumer-b' }], events,
     capture: { maxEvents: 100, totalEvents: events.length, droppedEvents: 0, complete: true },
   };
 }
@@ -77,6 +103,95 @@ test('captured strings render as text and cause navigation uses the recorded ord
   choose(10);
   query<HTMLButtonElement>('[data-action=cause]').click();
   assert.match(query<HTMLElement>('.rx-position').textContent ?? '', /#9/);
+  view.destroy();
+});
+
+test('subscription graph shows only executions and links observed by the selected event', () => {
+  const { host, query, choose, view } = mounted(subscriptionFixture());
+  assert.equal(host.querySelectorAll('[data-subscription]').length, 1);
+  assert.equal(host.querySelector('[data-subscription=connection-1]'), null);
+  assert.equal(host.querySelectorAll('[data-connection]').length, 0);
+  assert.match(query<HTMLElement>('.rx-connections').textContent ?? '', /Shared packages → Consumer B/);
+  choose(2);
+  assert.equal(host.querySelectorAll('[data-subscription]').length, 2);
+  assert.equal(host.querySelectorAll('[data-connection]').length, 0);
+  choose(3);
+  assert.equal(host.querySelectorAll('[data-connection]').length, 1);
+  assert.equal(host.querySelector('[data-subscription=consumer-b-1]'), null);
+  choose(5);
+  assert.equal(host.querySelectorAll('[data-subscription]').length, 3);
+  assert.equal(host.querySelectorAll('[data-connection][data-status=active]').length, 2);
+  assert.match(query<HTMLElement>('[data-subscription=connection-1]').textContent ?? '', /shared source connection · Active/);
+  assert.equal(query<HTMLElement>('.rx-subscription-evidence').dataset.evidence, 'observed');
+  choose(6);
+  assert.equal(query<HTMLElement>('[data-subscription=consumer-a-1]').dataset.status, 'unsubscribed');
+  assert.equal(query<HTMLElement>('[data-subscription=connection-1]').dataset.status, 'active');
+  assert.equal(query<HTMLElement>('[data-subscription=consumer-b-1]').dataset.status, 'active');
+  assert.equal(query<HTMLElement>('[data-sequence="3"]').dataset.status, 'closed');
+  assert.equal(query<HTMLElement>('[data-sequence="5"]').dataset.status, 'active');
+  choose(9);
+  assert.equal(host.querySelectorAll('[data-connection][data-status=closed]').length, 2);
+  choose(1);
+  assert.equal(host.querySelectorAll('[data-subscription]').length, 1);
+  assert.equal(host.querySelectorAll('[data-connection]').length, 0);
+  view.destroy();
+});
+
+test('subscription cards and accessible relationship buttons synchronize the timeline without selecting future events', () => {
+  const { query, choose, view } = mounted(subscriptionFixture());
+  choose(7);
+  const consumer = query<HTMLButtonElement>('[data-subscription=consumer-b-1]');
+  assert.equal(consumer.type, 'button');
+  consumer.click();
+  assert.match(query<HTMLElement>('.rx-position').textContent ?? '', /#4/);
+  assert.equal(query<HTMLElement>('[data-subscription=consumer-b-1]').getAttribute('aria-pressed'), 'true');
+  assert.equal(query<HTMLElement>('[data-execution=consumer-b-1]').dataset.selected, 'true');
+  assert.match(query<HTMLElement>('.rx-detail-title').textContent ?? '', /subscribe.*Consumer B/);
+  choose(7);
+  const relationship = query<HTMLButtonElement>('[data-sequence="5"]');
+  assert.match(relationship.getAttribute('aria-label') ?? '', /Shared packages.*Consumer B.*shared.*Active.*event 5/);
+  relationship.click();
+  assert.match(query<HTMLElement>('.rx-position').textContent ?? '', /#5/);
+  assert.equal(query<HTMLElement>('[data-execution=connection-1]').dataset.selected, 'true');
+  assert.match(query<HTMLElement>('.rx-detail').textContent ?? '', /Source executionconnection-1Destination executionconsumer-b-1/);
+  assert.match(query<HTMLElement>('.rx-provenance').textContent ?? '', /Recorded shared source connection/);
+  view.destroy();
+});
+
+test('legacy recordings retain declared definitions and clearly lack runtime relationship evidence', () => {
+  const { query, choose, host, view } = mounted();
+  choose(14);
+  assert.match(query<HTMLElement>('.rx-connections').textContent ?? '', /switchMap → results\$/);
+  assert.equal(host.querySelectorAll('[data-subscription]').length, 4);
+  assert.equal(host.querySelectorAll('[data-connection]').length, 0);
+  assert.equal(query<HTMLElement>('.rx-subscription-evidence').dataset.evidence, 'legacy');
+  assert.match(query<HTMLElement>('.rx-subscription-evidence').textContent ?? '', /version 1.*no explicit subscription relationships/);
+  assert.match(query<HTMLElement>('.rx-subscription-note').textContent ?? '', /version 2/);
+  view.destroy();
+});
+
+test('partial graph history uses unknown endpoint placeholders and safely renders stable labels', () => {
+  const original = subscriptionFixture();
+  const label = '<img src=x onerror="globalThis.bad=true">';
+  const partial: Trace = {
+    ...original,
+    nodes: original.nodes.map(node => node.id === 'shared' ? { ...node, label } : node),
+    events: original.events.slice(4),
+    capture: { ...original.capture, droppedEvents: 4, complete: false },
+  };
+  const { query, host, view } = mounted(partial);
+  const placeholder = query<HTMLButtonElement>('[data-subscription=consumer-b-1]');
+  assert.equal(placeholder.dataset.status, 'unknown');
+  assert.equal(placeholder.dataset.provenance, 'missing-history');
+  assert.equal(placeholder.disabled, true);
+  assert.match(placeholder.textContent ?? '', /^consumer-b-1/);
+  assert.doesNotMatch(placeholder.textContent ?? '', /Consumer B/);
+  assert.equal(query<HTMLElement>('.rx-subscription-evidence').dataset.evidence, 'partial');
+  assert.match(query<HTMLElement>('.rx-subscription-evidence').textContent ?? '', /absent edge does not establish/);
+  assert.equal(query<HTMLElement>('[data-sequence="5"]').dataset.status, 'unknown');
+  assert.match(query<HTMLElement>('[data-subscription=connection-1]').textContent ?? '', /<img/);
+  assert.match(query<HTMLElement>('[data-sequence="5"]').textContent ?? '', /<img/);
+  assert.equal(host.querySelector('img'), null);
   view.destroy();
 });
 
@@ -150,4 +265,42 @@ test('browser examples distinguish independent execution, explicit sharing, erro
   const disposed = createDemoTrace('unsubscribe');
   assert.equal(disposed.events.some(event => event.kind === 'complete'), false);
   assert.ok(getExecutions(disposed).every(item => item.status === 'unsubscribed' && item.endTime === 35));
+});
+
+test('labelled operator example keeps stable definitions across two separate cold executions', () => {
+  const trace = createDemoTrace('labels');
+  assert.deepEqual(trace.nodes.filter(node => node.kind === 'operator').map(node => [node.id, node.operator, node.domain]), [
+    ['double', 'map', 'doubleValue'], ['accept', 'filter', 'aboveTwo'], ['total', 'scan', 'addValue'],
+  ]);
+  assert.deepEqual(trace.events.filter(event => event.nodeId === 'results' && event.kind === 'next').map(event => event.value?.data), [4, 10, 4, 10]);
+  const executions = getExecutions(trace);
+  assert.equal(executions.filter(execution => execution.nodeId === 'total').length, 2);
+  assert.equal(new Set(executions.map(execution => execution.id)).size, 10);
+  const { query, choose, view } = mounted(trace);
+  const event = trace.events.find(item => item.nodeId === 'total' && item.kind === 'next');
+  assert.ok(event);
+  choose(event.seq);
+  assert.match(query<HTMLElement>('[data-node=total]').textContent ?? '', /Running total.*Definition: total.*scan.*addValue/);
+  assert.match(query<HTMLElement>('.rx-provenance').textContent ?? '', /Recorded boundary/);
+  view.destroy();
+});
+
+test('shared example records both consumers before values and keeps its connection after the first leaves', () => {
+  const trace = createDemoTrace('shared');
+  const connection = getExecutions(trace).find(execution => execution.role === 'connection');
+  assert.ok(connection);
+  assert.equal(connection.endTime, 35);
+  const beforeValues = trace.events.findLast(event => event.time === 5);
+  assert.ok(beforeValues);
+  const joined = getSubscriptionGraph(trace, beforeValues.seq);
+  assert.equal(joined.edges.filter(edge => edge.kind === 'shared' && edge.status === 'active').length, 2);
+  assert.ok(joined.nodes.every(node => node.nextCount === 0));
+  const firstLeaves = trace.events.findLast(event => event.time === 15);
+  assert.ok(firstLeaves);
+  const { query, choose, host, view } = mounted(trace);
+  choose(firstLeaves.seq);
+  assert.equal(query<HTMLElement>(`[data-subscription="${connection.id}"]`).dataset.status, 'active');
+  assert.equal(host.querySelectorAll('[data-kind=shared][data-status=active]').length, 1);
+  assert.equal(host.querySelectorAll('[data-kind=shared][data-status=closed]').length, 1);
+  view.destroy();
 });

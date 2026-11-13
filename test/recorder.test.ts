@@ -161,8 +161,8 @@ test('switchMap cancels the replaced inner and waits for its active inner after 
   assert.equal(inners.length, 2);
   assert.equal(inners[0]?.time, 0);
   assert.equal(inners[1]?.time, 40);
-  const first = trace.events.filter(event => event.executionId === inners[0]?.executionId);
-  const second = trace.events.filter(event => event.executionId === inners[1]?.executionId);
+  const first = trace.events.filter(event => event.executionId === inners[0]?.executionId && event.kind !== 'link');
+  const second = trace.events.filter(event => event.executionId === inners[1]?.executionId && event.kind !== 'link');
   assert.deepEqual(first.map(event => [event.kind, event.time]), [['subscribe', 0], ['unsubscribe', 40]]);
   assert.deepEqual(second.map(event => [event.kind, event.time]), [['subscribe', 40], ['next', 70], ['complete', 90]]);
   const replacement = trace.events.find(event => event.nodeId === 'latest' && event.port === 'input' && event.kind === 'next' && event.value?.data === 'B');

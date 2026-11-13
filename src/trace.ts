@@ -1,4 +1,4 @@
-import type { CapturedValue, JsonValue, Trace, TraceEdge, TraceEvent, TraceNode } from './types.js';
+import type { CapturedValue, JsonValue, SubscriptionLink, Trace, TraceEdge, TraceEvent, TraceNode } from './types.js';
 
 const MAX_TRACE_CHARACTERS = 32 * 1024 * 1024;
 const MAX_RETAINED_EVENTS = 250_000;
@@ -90,10 +90,24 @@ function capturedValue(value: unknown, path: string): CapturedValue {
   });
 }
 
+function subscriptionLink(value: unknown, path: string): SubscriptionLink {
+  const input = object(value, path);
+  keys(input, ['kind', 'sourceExecutionId', 'destinationExecutionId'], path);
+  const sourceExecutionId = string(input.sourceExecutionId, `${path}.sourceExecutionId`, true);
+  const destinationExecutionId = string(input.destinationExecutionId, `${path}.destinationExecutionId`, true);
+  if (sourceExecutionId === destinationExecutionId) fail(path, 'a subscription link cannot refer to itself');
+  return Object.freeze({
+    kind: choice(input.kind, ['upstream', 'inner', 'shared'], `${path}.kind`),
+    sourceExecutionId,
+    destinationExecutionId,
+  });
+}
+
 function validateTrace(value: unknown): Trace {
   const input = object(value, '$');
   keys(input, ['schemaVersion', 'name', 'rxjsBaseline', 'clock', 'nodes', 'edges', 'events', 'capture'], '$');
-  if (input.schemaVersion !== 1) fail('$.schemaVersion', 'only schema version 1 is supported');
+  if (input.schemaVersion !== 1 && input.schemaVersion !== 2) fail('$.schemaVersion', 'only schema versions 1 and 2 are supported');
+  const schemaVersion = input.schemaVersion;
   if (input.rxjsBaseline !== '7.8.2') fail('$.rxjsBaseline', 'only the RxJS 7.8.2 baseline is supported');
   const name = string(input.name, '$.name');
   const clockInput = object(input.clock, '$.clock');
@@ -146,25 +160,55 @@ function validateTrace(value: unknown): Trace {
 
   const executionFirst = new Map<string, TraceEvent>();
   const terminated = new Set<string>();
+  const recordedLinks = new Set<string>();
   const events = entries.map((entry, index): TraceEvent => {
     const path = `$.events[${index}]`;
     const event = object(entry, path);
-    keys(event, ['seq', 'time', 'nodeId', 'executionId', 'kind', 'port', 'role', 'parentExecutionId', 'causeEventSeq', 'innerIndex', 'value'], path);
+    keys(event, [
+      'seq', 'time', 'nodeId', 'executionId', 'kind', 'port', 'role',
+      'parentExecutionId', 'causeEventSeq', 'innerIndex', 'value',
+      ...(schemaVersion === 2 ? ['link'] : []),
+    ], path);
     const seq = integer(event.seq, `${path}.seq`, 1);
     if (seq !== droppedEvents + index + 1) fail(`${path}.seq`, 'events must be a contiguous ordered suffix of the recording');
     const nodeId = string(event.nodeId, `${path}.nodeId`, true);
     if (!nodeIds.has(nodeId)) fail(`${path}.nodeId`, 'unknown node');
     const executionId = string(event.executionId, `${path}.executionId`, true);
-    const kind = choice(event.kind, ['subscribe', 'next', 'error', 'complete', 'unsubscribe'], `${path}.kind`);
+    const kind = choice(event.kind, schemaVersion === 2
+      ? ['subscribe', 'next', 'error', 'complete', 'unsubscribe', 'link']
+      : ['subscribe', 'next', 'error', 'complete', 'unsubscribe'], `${path}.kind`);
     const port = choice(event.port, ['input', 'output'], `${path}.port`);
-    const role = choice(event.role, ['boundary', 'operator', 'inner'], `${path}.role`);
+    const role = choice(event.role, schemaVersion === 2
+      ? ['boundary', 'operator', 'inner', 'connection']
+      : ['boundary', 'operator', 'inner'], `${path}.role`);
     if ((kind === 'subscribe' || kind === 'unsubscribe') && port !== 'output') fail(path, 'subscription lifecycle events require the output port');
     if (port === 'input' && role !== 'operator') fail(path, 'only operator executions have an input port');
     const parentExecutionId = has(event, 'parentExecutionId') ? string(event.parentExecutionId, `${path}.parentExecutionId`, true) : undefined;
     if (role === 'inner' && parentExecutionId === undefined) fail(path, 'inner executions require parentExecutionId');
+    if (schemaVersion === 2 && role !== 'inner' && parentExecutionId !== undefined) fail(path, 'only inner executions have parentExecutionId');
     if (parentExecutionId === executionId) fail(path, 'an execution cannot parent itself');
     const causeEventSeq = has(event, 'causeEventSeq') ? integer(event.causeEventSeq, `${path}.causeEventSeq`, 1) : undefined;
     if (causeEventSeq !== undefined && causeEventSeq >= seq) fail(`${path}.causeEventSeq`, 'cause must precede this event');
+    const link = has(event, 'link') ? subscriptionLink(event.link, `${path}.link`) : undefined;
+    if (kind === 'link') {
+      if (!link) fail(path, 'link events require subscription link metadata');
+      if (port !== 'output') fail(path, 'subscription link events require the output port');
+      if (has(event, 'value')) fail(path, 'subscription link events cannot contain a payload');
+      if (link.sourceExecutionId !== executionId) fail(path, 'link event must belong to its source execution');
+      if (link.kind === 'inner' && (role !== 'inner' || parentExecutionId !== link.destinationExecutionId)) {
+        fail(path, 'an inner link must connect its inner execution to its parent');
+      }
+      if (link.kind === 'shared' && role !== 'connection') fail(path, 'a shared link must originate from a connection execution');
+      if (droppedEvents === 0 && (!executionFirst.has(link.sourceExecutionId) || !executionFirst.has(link.destinationExecutionId))) {
+        fail(path, 'subscription link endpoints must already exist');
+      }
+      if (terminated.has(link.destinationExecutionId)) fail(path, 'subscription link destination already terminated');
+      const identity = JSON.stringify([link.kind, link.sourceExecutionId, link.destinationExecutionId]);
+      if (recordedLinks.has(identity)) fail(path, 'duplicate subscription link');
+      recordedLinks.add(identity);
+    } else if (link !== undefined) {
+      fail(path, 'subscription link metadata is only valid on a link event');
+    }
     const result: TraceEvent = Object.freeze({
       seq,
       time: finite(event.time, `${path}.time`),
@@ -177,6 +221,7 @@ function validateTrace(value: unknown): Trace {
       ...(causeEventSeq !== undefined ? { causeEventSeq } : {}),
       ...(has(event, 'innerIndex') ? { innerIndex: integer(event.innerIndex, `${path}.innerIndex`) } : {}),
       ...(has(event, 'value') ? { value: capturedValue(event.value, `${path}.value`) } : {}),
+      ...(link === undefined ? {} : { link }),
     });
     if ((kind === 'next' || kind === 'error') && result.value === undefined) fail(path, 'next and error events require a captured-value result');
     const first = executionFirst.get(executionId);
@@ -195,8 +240,20 @@ function validateTrace(value: unknown): Trace {
     return result;
   });
 
+  // An evicted start may be unknown; a start retained after its link is contradictory.
+  const subscriptionStarts = new Map(events.filter(event => event.kind === 'subscribe').map(event => [event.executionId, event.seq]));
+  for (const event of events) {
+    if (!event.link) continue;
+    for (const endpoint of [event.link.sourceExecutionId, event.link.destinationExecutionId]) {
+      const start = subscriptionStarts.get(endpoint);
+      if (start !== undefined && start >= event.seq) {
+        fail(`$.events[${event.seq - droppedEvents - 1}].link`, 'subscription link endpoints must already exist');
+      }
+    }
+  }
+
   return Object.freeze({
-    schemaVersion: 1,
+    schemaVersion,
     name,
     rxjsBaseline: '7.8.2',
     clock,

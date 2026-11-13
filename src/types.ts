@@ -20,8 +20,15 @@ export interface TraceEdge {
   readonly to: string;
 }
 
-export type TraceEventKind = 'subscribe' | 'next' | 'error' | 'complete' | 'unsubscribe';
-export type ExecutionRole = 'boundary' | 'operator' | 'inner';
+export type TraceEventKind = 'subscribe' | 'next' | 'error' | 'complete' | 'unsubscribe' | 'link';
+export type ExecutionRole = 'boundary' | 'operator' | 'inner' | 'connection';
+
+/** An observed relationship between particular executions, never a declared node edge. */
+export type SubscriptionLink = {
+  readonly kind: 'upstream' | 'inner' | 'shared';
+  readonly sourceExecutionId: string;
+  readonly destinationExecutionId: string;
+};
 
 export interface TraceEvent {
   readonly seq: number;
@@ -36,10 +43,13 @@ export interface TraceEvent {
   readonly causeEventSeq?: number;
   readonly innerIndex?: number;
   readonly value?: CapturedValue;
+  /** Present only on a schema-v2 link event, owned by its source execution. */
+  readonly link?: SubscriptionLink;
 }
 
 export interface Trace {
-  readonly schemaVersion: 1;
+  /** Version 1 remains readable; new recordings include version 2 connection evidence. */
+  readonly schemaVersion: 1 | 2;
   readonly name: string;
   readonly rxjsBaseline: '7.8.2';
   readonly clock: { readonly name: string; readonly kind: 'monotonic' | 'virtual' | 'custom'; readonly unit: 'ms' };
@@ -68,6 +78,30 @@ export interface ExecutionSummary {
   readonly status: 'active' | 'completed' | 'errored' | 'unsubscribed' | 'unknown';
   readonly nextCount: number;
 }
+
+/** Missing retained execution history never supplies an invented definition or role. */
+export type SubscriptionGraphNode = Omit<ExecutionSummary, 'nodeId' | 'role'> & {
+  readonly nodeId?: string;
+  readonly role?: ExecutionRole;
+  readonly label: string;
+  readonly operator?: string;
+  readonly domain?: string;
+  readonly provenance: 'observed' | 'missing-history';
+};
+
+export type SubscriptionGraphEdge = SubscriptionLink & {
+  readonly id: string;
+  readonly observedAtSeq: number;
+  readonly status: 'active' | 'closed' | 'unknown';
+};
+
+export type SubscriptionGraph = {
+  readonly atSeq: number;
+  readonly nodes: readonly SubscriptionGraphNode[];
+  readonly edges: readonly SubscriptionGraphEdge[];
+  /** Observed covers instrumented boundaries only; it does not assert whole-program coverage. */
+  readonly evidence: 'observed' | 'partial' | 'legacy';
+};
 
 export interface SwitchMapState {
   readonly executionId: string;

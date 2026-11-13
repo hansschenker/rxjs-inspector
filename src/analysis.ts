@@ -34,6 +34,8 @@ export function getExecutions(trace: Trace, atSeq?: number): readonly ExecutionS
       };
       executions.set(event.executionId, execution);
     }
+    // A retained link can identify a source whose start was evicted, but does not
+    // itself start, close, or deliver a value through that execution.
     if (event.kind === 'subscribe') {
       execution.startSeq = event.seq;
       execution.startTime = event.time;
@@ -79,6 +81,7 @@ export function getSwitchMapState(trace: Trace, executionId: string, atSeq?: num
   let unsupportedOverlap = false;
   let unsupportedTransition = false;
   for (const event of relevant) {
+    if (event.kind === 'link') continue;
     if (event.executionId === executionId) {
       if (event.port === 'input' && event.kind === 'next' && outerCompleted) unsupportedTransition = true;
       if (event.port === 'input' && event.kind === 'complete') outerCompleted = true;
@@ -132,7 +135,16 @@ export function getSwitchMapState(trace: Trace, executionId: string, atSeq?: num
 export function explainEvent(trace: Trace, event: TraceEvent): string {
   const node = trace.nodes.find((candidate) => candidate.id === event.nodeId);
   const label = node?.label ?? event.nodeId;
-  const subject = event.role === 'inner' ? `Inner execution ${event.executionId}` : label;
+  const subject = event.role === 'inner'
+    ? `Inner execution ${event.executionId}`
+    : event.role === 'connection'
+      ? `Shared source connection ${event.executionId} (${label})`
+      : label;
+  if (event.kind === 'link') {
+    if (!event.link) return 'A subscription relationship was recorded without usable endpoint metadata.';
+    const { kind, sourceExecutionId, destinationExecutionId } = event.link;
+    return `Observed ${kind} connection: ${sourceExecutionId} → ${destinationExecutionId}. This records a subscription relationship, not a delivered value or exclusive lifetime ownership.`;
+  }
   if (event.kind === 'subscribe') {
     return event.role === 'inner'
       ? `${subject} subscribed${event.causeEventSeq !== undefined ? ` during event #${event.causeEventSeq}` : ''}. Its future notifications are not yet known at this cursor.`

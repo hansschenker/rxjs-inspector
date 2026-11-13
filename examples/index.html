@@ -18,8 +18,9 @@
       <label for="scenario">Controlled example
         <select id="scenario">
           <option value="switchMap">switchMap · latest search wins</option>
+          <option value="labels">Stable labels · map, filter, scan across two runs</option>
           <option value="independent">Two consumers · independent cold executions</option>
-          <option value="shared">Two consumers · explicitly shared source</option>
+          <option value="shared">Shared connection · first consumer leaves</option>
           <option value="error">Inner error · propagation and disposal</option>
           <option value="unsubscribe">Unsubscribe · consumer ends execution</option>
         </select>

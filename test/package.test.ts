@@ -23,7 +23,7 @@ test('the packed library exposes usable ESM, TypeScript declarations, and a head
       : execFileSync('npm', packArgs, { cwd: root, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
     const manifest = JSON.parse(manifestText) as Array<{ files: Array<{ path: string }> }>;
     const files = manifest[0]!.files.map(file => file.path);
-    for (const expected of ['package.json', 'README.md', 'LICENSE', 'dist/index.js', 'dist/index.d.ts', 'dist/viewer.js', 'dist/viewer.d.ts']) {
+    for (const expected of ['package.json', 'README.md', 'LICENSE', 'dist/index.js', 'dist/index.d.ts', 'dist/subscription-graph.js', 'dist/subscription-graph.d.ts', 'dist/viewer.js', 'dist/viewer.d.ts']) {
       assert.ok(files.includes(expected), `npm package must contain ${expected}`);
     }
     assert.equal(files.some(path => path.startsWith('node_modules/') || path.startsWith('test/')), false);
@@ -40,26 +40,31 @@ test('the packed library exposes usable ESM, TypeScript declarations, and a head
     }
     writeFileSync(join(consumer, 'package.json'), '{"private":true,"type":"module"}\n');
     writeFileSync(join(consumer, 'consumer.mts'), `
-import { createInspector, parseTrace, serializeTrace, type Trace } from '@hansschenker/rxjs-inspector';
+import { createInspector, getSubscriptionGraph, parseTrace, serializeTrace, type SubscriptionGraph, type Trace } from '@hansschenker/rxjs-inspector';
 import { mountInspector } from '@hansschenker/rxjs-inspector/viewer';
-import { of } from 'rxjs';
+import { of, map } from 'rxjs';
 
 const inspector = createInspector({
   nodes: [
     { id: 'source', label: 'source$', kind: 'source' },
+    { id: 'double', label: 'Double each value', kind: 'operator', operator: 'map', domain: 'doubleValue' },
     { id: 'latest', label: 'latest', kind: 'operator', operator: 'switchMap' },
   ],
 });
 function twice$(value: number) { return of(value * 2); }
+function doubleValue(value: number) { return value * 2; }
 function invalidProject(value: number) { return value * 2; }
 // @ts-expect-error Domain projection must produce an ObservableInput.
 inspector.switchMap('latest', invalidProject);
 const values: number[] = [];
-of(1, 2).pipe(inspector.inspect<number>('source'), inspector.switchMap('latest', twice$))
+of(1, 2).pipe(inspector.inspect<number>('source'), inspector.operator('double', map(doubleValue)), inspector.switchMap('latest', twice$))
   .subscribe(value => values.push(value));
 const trace: Trace = parseTrace(serializeTrace(inspector.getTrace()));
-if (JSON.stringify(values) !== '[2,4]') throw new Error('packaged runtime did not deliver expected values');
+if (JSON.stringify(values) !== '[4,8]') throw new Error('packaged runtime did not deliver expected values');
 if (trace.events.length === 0) throw new Error('packaged runtime did not record events');
+const graph: SubscriptionGraph = getSubscriptionGraph(trace);
+if (!graph.nodes.some(node => node.nodeId === 'double' && node.label === 'Double each value')) throw new Error('stable operator label is missing');
+if (!graph.edges.some(edge => edge.kind === 'upstream')) throw new Error('observed subscription relationships are missing');
 if (typeof mountInspector !== 'function') throw new Error('viewer export is missing');
 if (typeof globalThis.document !== 'undefined') throw new Error('headless consumer unexpectedly has a DOM');
 console.log('package consumer passed');

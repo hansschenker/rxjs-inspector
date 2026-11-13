@@ -1,6 +1,7 @@
 import { explainEvent, getExecutions, getSwitchMapState } from './analysis.js';
+import { getSubscriptionGraph } from './subscription-graph.js';
 import { parseTrace, serializeTrace } from './trace.js';
-import type { ExecutionSummary, Trace, TraceEvent, TraceNode } from './types.js';
+import type { ExecutionSummary, SubscriptionGraph, SubscriptionGraphNode, Trace, TraceEvent, TraceNode } from './types.js';
 
 export interface InspectorView {
   /** Replace the recording and return the cursor to its first retained event. */
@@ -12,6 +13,7 @@ export interface InspectorView {
 const css = `
 .rx-inspector{--rx-bg:light-dark(#fff,#171c24);--rx-surface:light-dark(#f5f7fa,#222a36);--rx-text:light-dark(#202d3f,#ecf1f7);--rx-muted:light-dark(#53647b,#afbdd0);--rx-line:light-dark(#d6dfeb,#3c4a5f);--rx-track:light-dark(#e3eaf3,#344155);--rx-active:light-dark(#3565a4,#8cb4ed);--rx-focus:light-dark(#eaf1fc,#2b3c56);--rx-complete:light-dark(#237454,#91d5b6);--rx-error:light-dark(#ae3434,#ffa4a4);--rx-cancel:light-dark(#a45621,#efb27e);--rx-button:light-dark(#263e61,#dce8fa);--rx-button-text:light-dark(#fff,#172d4c);color-scheme:light dark;container-type:inline-size;font:400 14px/1.5 system-ui,sans-serif;color:var(--rx-text);background:var(--rx-bg);border:1px solid var(--rx-line);border-radius:12px;overflow:hidden;max-width:100%;min-width:0}
 .rx-inspector *{box-sizing:border-box}.rx-inspector h2,.rx-inspector h3,.rx-inspector p{margin:0}.rx-inspector h2{font-size:18px;font-weight:600}.rx-inspector h3{font-size:14px;font-weight:600}.rx-inspector button,.rx-inspector select,.rx-inspector input{font:inherit;color:var(--rx-text)}.rx-inspector button,.rx-inspector select{border:1px solid var(--rx-line);border-radius:6px;background:var(--rx-bg);padding:7px 10px;min-height:38px}.rx-inspector button{cursor:pointer}.rx-inspector button:disabled{cursor:default;opacity:.42}.rx-inspector button:focus-visible,.rx-inspector select:focus-visible,.rx-inspector input:focus-visible{outline:2px solid var(--rx-active);outline-offset:3px}.rx-inspector .rx-primary{background:var(--rx-button);color:var(--rx-button-text);border-color:transparent}.rx-inspector .rx-muted{font-size:12px;color:var(--rx-muted)}.rx-inspector .rx-mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}.rx-inspector .rx-header,.rx-inspector .rx-section{padding:16px 20px}.rx-inspector .rx-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--rx-line)}.rx-inspector .rx-header-main{min-width:0}.rx-inspector .rx-trace-name{overflow-wrap:anywhere}.rx-inspector .rx-files{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.rx-inspector .rx-file-input{position:absolute;width:1px;height:1px;padding:0;opacity:0;pointer-events:none}.rx-inspector .rx-controls{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:end;padding:12px 20px;background:var(--rx-surface)}.rx-inspector .rx-picker{display:grid;gap:4px;min-width:0;font-size:12px;color:var(--rx-muted)}.rx-inspector .rx-picker select{min-width:0;width:100%;color:var(--rx-text);font-size:14px}.rx-inspector .rx-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;margin-bottom:12px}.rx-inspector .rx-graph{position:relative;padding:8px 0}.rx-inspector .rx-graph-nodes{position:relative;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:34px}.rx-inspector .rx-node{position:relative;z-index:1;text-align:left;padding:12px;border-radius:8px;background:var(--rx-surface);min-width:0;display:grid;align-content:start;gap:3px}.rx-inspector .rx-node[data-selected=true]{background:var(--rx-focus);border-color:var(--rx-active)}.rx-inspector .rx-node-name{font-weight:600;overflow-wrap:anywhere}.rx-inspector .rx-node-domain{font-size:12px}.rx-inspector .rx-graph-lines{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;color:var(--rx-muted)}.rx-inspector .rx-edge{fill:none;stroke:currentColor;stroke-width:1.3}.rx-inspector .rx-edge[data-selected=true]{color:var(--rx-active);stroke-width:1.8}.rx-inspector .rx-connections{margin-top:9px;overflow-wrap:anywhere}.rx-inspector .rx-lanes{display:grid;gap:5px}.rx-inspector .rx-lane{display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px;align-items:center;min-height:50px}.rx-inspector .rx-lane-name{min-width:0;text-align:left;border:0;background:transparent;padding:5px 0;display:grid;gap:1px;font-size:12px;line-height:1.3}.rx-inspector .rx-lane-name[data-selected=true]{color:var(--rx-active)}.rx-inspector .rx-lane-id{overflow-wrap:anywhere}.rx-inspector .rx-plot{height:34px;position:relative;margin:0 12px}.rx-inspector .rx-track,.rx-inspector .rx-life{position:absolute;top:15px;height:5px;min-width:2px;border-radius:2px;background:var(--rx-track)}.rx-inspector .rx-life{background:var(--rx-active)}.rx-inspector .rx-life[data-status=completed]{background:var(--rx-complete)}.rx-inspector .rx-life[data-status=errored]{background:var(--rx-error)}.rx-inspector .rx-life[data-status=unsubscribed]{background:var(--rx-cancel)}.rx-inspector .rx-cursor{position:absolute;top:0;height:34px;width:1px;background:var(--rx-muted);opacity:.55}.rx-inspector .rx-emission{position:absolute;top:12px;height:11px;width:2px;background:var(--rx-muted);opacity:.6}.rx-inspector .rx-selected-mark{position:absolute;top:10px;width:14px;height:14px;transform:translateX(-6px);border-radius:50%;background:var(--rx-button);box-shadow:0 0 0 2px var(--rx-bg)}.rx-inspector .rx-axis{display:grid;grid-template-columns:160px minmax(0,1fr);gap:12px;margin-top:7px;font-size:12px;color:var(--rx-muted)}.rx-inspector .rx-axis-labels{display:flex;justify-content:space-between;border-top:1px solid var(--rx-line);padding-top:4px;margin:0 12px;font-variant-numeric:tabular-nums}.rx-inspector .rx-legend{display:flex;gap:8px 18px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--rx-muted)}.rx-inspector .rx-legend-item{display:inline-flex;align-items:center;gap:6px}.rx-inspector .rx-swatch{display:inline-block;width:14px;height:4px;background:var(--rx-active);border-radius:1px}.rx-inspector .rx-swatch[data-status=completed]{background:var(--rx-complete)}.rx-inspector .rx-swatch[data-status=errored]{background:var(--rx-error)}.rx-inspector .rx-swatch[data-status=unsubscribed]{background:var(--rx-cancel)}.rx-inspector .rx-detail{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;border-top:1px solid var(--rx-line);background:var(--rx-surface)}.rx-inspector .rx-detail p{margin-top:7px;overflow-wrap:anywhere}.rx-inspector .rx-detail-title{font-weight:600}.rx-inspector .rx-value{font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;margin:9px 0 0;padding:10px;background:var(--rx-bg);border-radius:6px}.rx-inspector .rx-facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;margin:10px 0 0;font-size:12px}.rx-inspector .rx-facts dt{color:var(--rx-muted)}.rx-inspector .rx-facts dd{margin:0;overflow-wrap:anywhere}.rx-inspector .rx-provenance{font-size:12px;color:var(--rx-muted);margin-top:4px}.rx-inspector .rx-cause{margin-top:10px;font-size:12px}.rx-inspector .rx-message{padding:10px 20px;border-top:1px solid var(--rx-line);font-size:13px;overflow-wrap:anywhere}.rx-inspector .rx-message[data-error=true]{color:var(--rx-error)}.rx-inspector [hidden]{display:none!important}.rx-inspector .rx-footer{border-top:1px solid var(--rx-line);padding:10px 20px;font-size:12px;color:var(--rx-muted)}.rx-inspector .rx-gap{color:var(--rx-cancel)}.rx-inspector .rx-empty{color:var(--rx-muted);padding:12px 0}.rx-inspector .rx-position{font-variant-numeric:tabular-nums}
+.rx-inspector .rx-subscription-section{border-top:1px solid var(--rx-line)}.rx-inspector .rx-subscription-evidence{margin-bottom:10px}.rx-inspector .rx-subscription-links{display:grid;gap:6px;list-style:none;margin:12px 0 8px;padding:0;max-height:230px;overflow:auto}.rx-inspector .rx-subscription-link{display:block;width:100%;text-align:left;font-size:12px;overflow-wrap:anywhere;border-left:3px solid var(--rx-active)}.rx-inspector .rx-subscription-link[data-selected=true]{background:var(--rx-focus)}.rx-inspector .rx-subscription-link[data-status=closed]{border-left-color:var(--rx-muted)}.rx-inspector .rx-subscription-link[data-status=unknown]{border-left-color:var(--rx-cancel)}.rx-inspector .rx-subscription-node[data-status=unknown]{border-style:dashed}.rx-inspector .rx-edge[data-kind=shared]{stroke-dasharray:5 3}.rx-inspector .rx-edge[data-kind=inner]{stroke-dasharray:2 3}.rx-inspector .rx-edge[data-status=closed]{opacity:.5}.rx-inspector .rx-edge[data-status=unknown]{color:var(--rx-cancel)}
 @media(max-width:620px){.rx-inspector .rx-header,.rx-inspector .rx-section{padding:14px}.rx-inspector .rx-controls{padding:12px 14px;grid-template-columns:1fr 1fr;gap:8px}.rx-inspector .rx-picker{grid-column:1/-1;grid-row:1}.rx-inspector .rx-picker select{font-size:16px}.rx-inspector .rx-graph-nodes{grid-template-columns:1fr;gap:24px}.rx-inspector .rx-detail{grid-template-columns:1fr;gap:20px}.rx-inspector .rx-lane,.rx-inspector .rx-axis{grid-template-columns:95px minmax(0,1fr);gap:5px}.rx-inspector .rx-lane-name{font-size:12px}.rx-inspector .rx-plot,.rx-inspector .rx-axis-labels{margin-left:8px;margin-right:8px}.rx-inspector .rx-files{width:100%}.rx-inspector .rx-footer,.rx-inspector .rx-message{padding-left:14px;padding-right:14px}}
 @container(max-width:620px){.rx-inspector .rx-header,.rx-inspector .rx-section{padding:14px}.rx-inspector .rx-controls{padding:12px 14px;grid-template-columns:1fr 1fr;gap:8px}.rx-inspector .rx-picker{grid-column:1/-1;grid-row:1}.rx-inspector .rx-picker select{font-size:16px}.rx-inspector .rx-graph-nodes{grid-template-columns:1fr;gap:24px}.rx-inspector .rx-detail{grid-template-columns:1fr;gap:20px}.rx-inspector .rx-lane,.rx-inspector .rx-axis{grid-template-columns:95px minmax(0,1fr);gap:5px}.rx-inspector .rx-plot,.rx-inspector .rx-axis-labels{margin-left:8px;margin-right:8px}.rx-inspector .rx-files{width:100%}.rx-inspector .rx-footer,.rx-inspector .rx-message{padding-left:14px;padding-right:14px}}
 @media(pointer:coarse){.rx-inspector button,.rx-inspector select{min-height:44px}}
@@ -19,7 +21,45 @@ const css = `
 
 let viewCount = 0;
 const MAX_LANES = 80;
+const MAX_GRAPH_NODES = 40;
+const MAX_GRAPH_LINKS = 80;
 const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
+
+type DrawnEdge = {
+  readonly from: string;
+  readonly to: string;
+  readonly selected: boolean;
+  readonly kind?: string;
+  readonly status?: string;
+};
+
+/** Order visible cards by recorded connections; preserve cycles without inventing edges. */
+function orderSubscriptions(graph: SubscriptionGraph): readonly SubscriptionGraphNode[] {
+  const byId = new Map(graph.nodes.map(node => [node.id, node]));
+  const remaining = new Map(graph.nodes.map(node => [node.id, 0]));
+  const destinations = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (!byId.has(edge.sourceExecutionId) || !byId.has(edge.destinationExecutionId)) continue;
+    remaining.set(edge.destinationExecutionId, (remaining.get(edge.destinationExecutionId) ?? 0) + 1);
+    const targets = destinations.get(edge.sourceExecutionId) ?? [];
+    targets.push(edge.destinationExecutionId);
+    destinations.set(edge.sourceExecutionId, targets);
+  }
+  const queue = graph.nodes.filter(node => remaining.get(node.id) === 0);
+  const result: SubscriptionGraphNode[] = [];
+  const visited = new Set<string>();
+  for (let index = 0; index < queue.length; index++) {
+    const node = queue[index]!;
+    result.push(node);
+    visited.add(node.id);
+    for (const target of destinations.get(node.id) ?? []) {
+      const count = (remaining.get(target) ?? 1) - 1;
+      remaining.set(target, count);
+      if (count === 0) queue.push(byId.get(target)!);
+    }
+  }
+  return [...result, ...graph.nodes.filter(node => !visited.has(node.id))];
+}
 
 function formatTime(time: number): string {
   return Number(time.toFixed(3)).toString();
@@ -43,6 +83,8 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
   let eventsByExecution = new Map<string, TraceEvent[]>();
   let nodeById = new Map<string, TraceNode>();
   let graphButtons = new Map<string, HTMLButtonElement>();
+  let subscriptionButtons = new Map<string, HTMLButtonElement>();
+  let subscriptionGraph = getSubscriptionGraph(initialTrace, 0);
   const urls = new Set<string>();
   const cleanups: (() => void)[] = [];
 
@@ -102,6 +144,23 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
   const connections = make('p', 'rx-connections rx-muted');
   graphSection.append(graphHeading, graph, connections);
 
+  const subscriptionSection = make('section', 'rx-section rx-subscription-section');
+  subscriptionSection.setAttribute('aria-label', 'Subscription graph at selected event');
+  const subscriptionHeading = make('div', 'rx-section-head');
+  const subscriptionCount = make('span', 'rx-muted');
+  subscriptionHeading.append(make('h3', '', 'Subscription graph'), subscriptionCount);
+  const subscriptionEvidence = make('p', 'rx-muted rx-subscription-evidence');
+  const subscriptionDiagram = make('div', 'rx-graph rx-subscription-graph');
+  const subscriptionSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  subscriptionSvg.classList.add('rx-graph-lines');
+  subscriptionSvg.setAttribute('aria-hidden', 'true');
+  const subscriptionNodes = make('div', 'rx-graph-nodes rx-subscription-nodes');
+  subscriptionDiagram.append(subscriptionSvg, subscriptionNodes);
+  const subscriptionLinks = make('ul', 'rx-subscription-links');
+  subscriptionLinks.setAttribute('aria-label', 'Observed subscription relationships');
+  const subscriptionNote = make('p', 'rx-muted rx-subscription-note');
+  subscriptionSection.append(subscriptionHeading, subscriptionEvidence, subscriptionDiagram, subscriptionLinks, subscriptionNote);
+
   const timelineSection = make('section', 'rx-section');
   const timelineHeading = make('div', 'rx-section-head');
   const position = make('span', 'rx-muted rx-position');
@@ -149,7 +208,7 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
   message.setAttribute('aria-live', 'polite');
   message.hidden = true;
   const footer = make('footer', 'rx-footer');
-  root.append(style, header, controls, graphSection, timelineSection, detail, message, footer);
+  root.append(style, header, controls, graphSection, subscriptionSection, timelineSection, detail, message, footer);
 
   function showMessage(text: string, isError = false): void {
     message.textContent = text;
@@ -187,6 +246,7 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
       const nodeButton = button('', 'node', 'rx-node');
       nodeButton.dataset.node = node.id;
       nodeButton.append(make('span', 'rx-node-name', node.label));
+      nodeButton.append(make('span', 'rx-muted rx-mono', `Definition: ${node.id}`));
       nodeButton.append(make('span', 'rx-muted', node.operator ?? node.kind));
       if (node.domain) nodeButton.append(make('span', 'rx-node-domain rx-mono', node.domain));
       const state = make('span', 'rx-muted');
@@ -205,15 +265,20 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
     render();
   }
 
-  function drawEdges(): void {
-    if (disposed) return;
-    const bounds = graph.getBoundingClientRect();
-    graphSvg.replaceChildren();
+  function drawConnections(
+    container: HTMLElement,
+    svg: SVGSVGElement,
+    buttons: ReadonlyMap<string, HTMLButtonElement>,
+    edges: readonly DrawnEdge[],
+    markerId: string,
+  ): void {
+    const bounds = container.getBoundingClientRect();
+    svg.replaceChildren();
     if (!bounds.width || !bounds.height) return;
-    graphSvg.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
+    svg.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
     const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-    marker.id = `${instanceId}-arrow`;
+    marker.id = markerId;
     for (const [name, val] of Object.entries({ viewBox: '0 0 8 8', refX: '7', refY: '4', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' })) marker.setAttribute(name, val);
     const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     arrow.setAttribute('d', 'M 0 1 L 7 4 L 0 7');
@@ -221,10 +286,10 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
     arrow.setAttribute('stroke', 'currentColor');
     marker.append(arrow);
     defs.append(marker);
-    graphSvg.append(defs);
-    for (const edge of trace.edges) {
-      const from = graphButtons.get(edge.from)?.getBoundingClientRect();
-      const to = graphButtons.get(edge.to)?.getBoundingClientRect();
+    svg.append(defs);
+    for (const edge of edges) {
+      const from = buttons.get(edge.from)?.getBoundingClientRect();
+      const to = buttons.get(edge.to)?.getBoundingClientRect();
       if (!from || !to) continue;
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       let d: string;
@@ -269,16 +334,98 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
       }
       path.setAttribute('d', d);
       path.classList.add('rx-edge');
-      path.setAttribute('marker-end', `url(#${instanceId}-arrow)`);
-      path.dataset.selected = String(selectedEvent()?.nodeId === edge.from || selectedEvent()?.nodeId === edge.to);
-      graphSvg.append(path);
+      path.setAttribute('marker-end', `url(#${markerId})`);
+      path.dataset.selected = String(edge.selected);
+      if (edge.kind) path.dataset.kind = edge.kind;
+      if (edge.status) path.dataset.status = edge.status;
+      svg.append(path);
     }
+  }
+
+  function drawEdges(): void {
+    if (disposed) return;
+    const selected = selectedEvent();
+    drawConnections(graph, graphSvg, graphButtons, trace.edges.map(edge => ({
+      ...edge, selected: selected?.nodeId === edge.from || selected?.nodeId === edge.to,
+    })), `${instanceId}-arrow`);
+    drawConnections(subscriptionDiagram, subscriptionSvg, subscriptionButtons, subscriptionGraph.edges.map(edge => ({
+      from: edge.sourceExecutionId,
+      to: edge.destinationExecutionId,
+      selected: selected?.executionId === edge.sourceExecutionId || selected?.executionId === edge.destinationExecutionId,
+      kind: edge.kind,
+      status: edge.status,
+    })), `${instanceId}-subscription-arrow`);
   }
 
   function scheduleEdges(): void {
     if (frame !== undefined && window) window.cancelAnimationFrame(frame);
     if (window?.requestAnimationFrame) frame = window.requestAnimationFrame(drawEdges);
     else drawEdges();
+  }
+
+  function renderSubscriptions(event: TraceEvent | undefined): void {
+    subscriptionGraph = getSubscriptionGraph(trace, event?.seq ?? 0);
+    subscriptionButtons = new Map();
+    subscriptionNodes.replaceChildren();
+    subscriptionLinks.replaceChildren();
+    subscriptionEvidence.dataset.evidence = subscriptionGraph.evidence;
+    subscriptionEvidence.textContent = subscriptionGraph.evidence === 'legacy'
+      ? 'This version 1 trace records execution lifetimes but no explicit subscription relationships. Declared dataflow edges are not runtime evidence.'
+      : subscriptionGraph.evidence === 'partial'
+        ? 'Partial recorded history. Missing starts or relationships remain unknown; an absent edge does not establish that no connection existed.'
+        : 'Observed connections at or before the selected event. Only instrumented boundaries are represented; unobserved connections can remain.';
+    subscriptionCount.textContent = `${subscriptionGraph.nodes.length} execution${subscriptionGraph.nodes.length === 1 ? '' : 's'} · ${subscriptionGraph.edges.length} connection${subscriptionGraph.edges.length === 1 ? '' : 's'} at cursor`;
+
+    const ordered = orderSubscriptions(subscriptionGraph);
+    const selectedIds = new Set([event?.executionId, event?.link?.sourceExecutionId, event?.link?.destinationExecutionId].filter((id): id is string => id !== undefined));
+    const selectedNodes = ordered.filter(node => selectedIds.has(node.id));
+    const remainingNodes = ordered.filter(node => !selectedIds.has(node.id));
+    const visibleIds = new Set([...remainingNodes.slice(0, Math.max(0, MAX_GRAPH_NODES - selectedNodes.length)), ...selectedNodes].map(node => node.id));
+    const visible = ordered.filter(node => visibleIds.has(node.id));
+    const byId = new Map(subscriptionGraph.nodes.map(node => [node.id, node]));
+    for (const node of visible) {
+      const card = button('', 'subscription', 'rx-node rx-subscription-node');
+      card.dataset.subscription = node.id;
+      card.dataset.selected = String(event?.executionId === node.id);
+      card.dataset.status = node.status;
+      card.dataset.provenance = node.provenance;
+      card.setAttribute('aria-pressed', String(event?.executionId === node.id));
+      card.append(make('span', 'rx-node-name', node.label));
+      card.append(make('span', 'rx-muted rx-mono', node.id));
+      const role = node.role === 'connection' ? 'shared source connection' : node.role === 'inner' ? 'inner subscription' : node.operator ?? node.role ?? 'unretained execution';
+      card.append(make('span', 'rx-muted', `${role} · ${statusText(node.status)}`));
+      if (node.domain) card.append(make('span', 'rx-node-domain rx-mono', node.domain));
+      if (node.provenance === 'missing-history') card.append(make('span', 'rx-muted', 'Some execution history is not retained'));
+      card.disabled = !(eventsByExecution.get(node.id)?.some(item => item.seq <= subscriptionGraph.atSeq));
+      subscriptionButtons.set(node.id, card);
+      subscriptionNodes.append(card);
+    }
+    if (!visible.length) subscriptionNodes.append(make('p', 'rx-empty', 'No subscription executions observed at this cursor.'));
+
+    const edges = subscriptionGraph.edges.slice(0, MAX_GRAPH_LINKS);
+    if (event?.kind === 'link' && !edges.some(edge => edge.observedAtSeq === event.seq)) {
+      const selected = subscriptionGraph.edges.find(edge => edge.observedAtSeq === event.seq);
+      if (selected) edges.splice(Math.max(0, edges.length - 1), 1, selected);
+    }
+    for (const edge of edges) {
+      const source = byId.get(edge.sourceExecutionId);
+      const destination = byId.get(edge.destinationExecutionId);
+      const describe = (node: SubscriptionGraphNode | undefined, id: string): string => node?.label && node.label !== id ? `${node.label} (${id})` : id;
+      const status = edge.status[0]!.toUpperCase() + edge.status.slice(1);
+      const text = `${describe(source, edge.sourceExecutionId)} → ${describe(destination, edge.destinationExecutionId)} · ${edge.kind} · ${status}`;
+      const link = button(text, 'subscription-link', 'rx-subscription-link');
+      link.dataset.connection = edge.id;
+      link.dataset.sequence = String(edge.observedAtSeq);
+      link.dataset.kind = edge.kind;
+      link.dataset.status = edge.status;
+      link.dataset.selected = String(event?.seq === edge.observedAtSeq);
+      link.setAttribute('aria-label', `${text}. Select recorded connection event ${edge.observedAtSeq}.`);
+      const item = make('li');
+      item.append(link);
+      subscriptionLinks.append(item);
+    }
+    const limited = `${ordered.length > visible.length ? `Showing ${visible.length} of ${ordered.length} execution cards. ` : ''}${subscriptionGraph.edges.length > edges.length ? `Showing ${edges.length} of ${subscriptionGraph.edges.length} connections. ` : ''}`;
+    subscriptionNote.textContent = `${limited}${edges.length ? 'Arrows point from a source execution to its destination. Shared connections can outlive one consumer. Select a card or connection to inspect its recorded event.' : subscriptionGraph.evidence === 'legacy' ? 'Open a version 2 recording to inspect explicit connections.' : 'No connection has been observed in the retained history at this cursor.'}`;
   }
 
   function renderTimeline(event: TraceEvent | undefined, executions: readonly ExecutionSummary[]): void {
@@ -308,7 +455,7 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
       name.dataset.execution = execution.id;
       name.dataset.selected = String(event?.executionId === execution.id);
       const node = nodeById.get(execution.nodeId);
-      name.append(make('span', 'rx-lane-id', `${node?.label ?? execution.nodeId}${execution.role === 'inner' ? ' · inner' : ''}`));
+      name.append(make('span', 'rx-lane-id', `${node?.label ?? execution.nodeId}${execution.role === 'inner' ? ' · inner' : execution.role === 'connection' ? ' · source connection' : ''}`));
       name.append(make('span', 'rx-muted rx-mono', execution.id));
       name.append(make('span', 'rx-muted', state ? `${statusText(state.status)} · ${state.nextCount} value${state.nextCount === 1 ? '' : 's'}` : 'Not started at cursor'));
       const plot = make('div', 'rx-plot');
@@ -370,6 +517,7 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
       if (state) state.textContent = `${count} execution${count === 1 ? '' : 's'} observed at cursor`;
       nodeButton.disabled = !trace.events.some(item => item.nodeId === nodeId);
     }
+    renderSubscriptions(event);
     renderTimeline(event, executions);
     eventFacts.replaceChildren();
     modelFacts.replaceChildren();
@@ -389,6 +537,11 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
     addFact(eventFacts, 'Execution', event.executionId);
     addFact(eventFacts, 'Boundary', `${event.role} · ${event.port}`);
     addFact(eventFacts, 'Time', `${formatTime(event.time)} ms`);
+    if (event.link) {
+      addFact(eventFacts, 'Connection kind', event.link.kind);
+      addFact(eventFacts, 'Source execution', event.link.sourceExecutionId);
+      addFact(eventFacts, 'Destination execution', event.link.destinationExecutionId);
+    }
     if (event.parentExecutionId) addFact(eventFacts, 'Parent execution', event.parentExecutionId);
     if (event.value) {
       capturedStatus.textContent = `Value capture: ${event.value.status}${event.value.reason ? ` · ${event.value.reason}` : ''}`;
@@ -413,13 +566,15 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
       addFact(modelFacts, 'Output', statusText(state.outputStatus));
       modelExplanation.textContent = state.explanation;
     } else {
-      provenance.textContent = 'Recorded boundary';
+      provenance.textContent = event.role === 'connection' ? 'Recorded shared source connection' : 'Recorded boundary';
       const state = executions.find(item => item.id === event.executionId);
       if (state) {
         addFact(modelFacts, 'Execution status', statusText(state.status));
         addFact(modelFacts, 'Output values', String(state.nextCount));
       }
-      modelExplanation.textContent = 'Select a switchMap execution or one of its inner events to inspect the operator policy.';
+      modelExplanation.textContent = event.role === 'connection'
+        ? 'This upstream connection has its own lifetime. Closing one consumer does not imply that the connection has closed.'
+        : 'Select a switchMap execution or one of its inner events to inspect the supported operator policy. A generic label does not expose private operator state.';
     }
     scheduleEdges();
   }
@@ -470,6 +625,22 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
       case 'import': fileInput.click(); break;
       case 'export': exportJson(); break;
       case 'cause': selectSequence(selectedEvent()?.causeEventSeq); break;
+      case 'subscription-link': {
+        const id = actionElement.dataset.connection;
+        selectSequence(Number(actionElement.dataset.sequence));
+        // Rendering replaces these buttons. Keep keyboard focus on the same
+        // recorded relationship so the next Tab continues from this location.
+        Array.from(subscriptionLinks.querySelectorAll<HTMLButtonElement>('button'))
+          .find(item => item.dataset.connection === id)?.focus({ preventScroll: true });
+        break;
+      }
+      case 'subscription': {
+        const id = actionElement.dataset.subscription ?? '';
+        const recorded = eventsByExecution.get(id);
+        selectSequence(recorded?.filter(item => item.seq <= (selectedEvent()?.seq ?? 0)).at(-1)?.seq);
+        subscriptionButtons.get(id)?.focus({ preventScroll: true });
+        break;
+      }
       case 'execution': {
         const recorded = eventsByExecution.get(actionElement.dataset.execution ?? '');
         selectSequence(recorded?.[0]?.seq);
@@ -515,6 +686,7 @@ export function mountInspector(element: HTMLElement, initialTrace: Trace): Inspe
   if (Observer) {
     const observer = new Observer(scheduleEdges);
     observer.observe(graph);
+    observer.observe(subscriptionDiagram);
     cleanups.push(() => observer.disconnect());
   } else if (window) {
     window.addEventListener('resize', scheduleEdges);

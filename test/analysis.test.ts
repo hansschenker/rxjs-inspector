@@ -174,3 +174,52 @@ test('rejects ambiguous invalid cursor numbers', () => {
     assert.throws(() => getSwitchMapState(trace, 'operator:1', value), /cursor/);
   }
 });
+
+test('explicit link events do not become values, terminals, or switchMap state transitions', () => {
+  const original = recording();
+  const events: TraceEvent[] = [];
+  const sequences = new Map<number, number>();
+  for (const event of original.events) {
+    const seq = events.length + 1;
+    sequences.set(event.seq, seq);
+    const observed: TraceEvent = {
+      ...event, seq,
+      ...(event.causeEventSeq === undefined ? {} : { causeEventSeq: sequences.get(event.causeEventSeq)! }),
+    };
+    events.push(observed);
+    if (observed.kind === 'subscribe' && observed.role === 'inner') {
+      events.push({
+        ...observed, seq: events.length + 1, kind: 'link',
+        link: { kind: 'inner', sourceExecutionId: observed.executionId, destinationExecutionId: observed.parentExecutionId! },
+      });
+    }
+  }
+  const trace: Trace = { ...original, schemaVersion: 2, events, capture: { ...original.capture, totalEvents: events.length } };
+  assert.deepEqual(getExecutions(trace).map(({ id, status, nextCount }) => ({ id, status, nextCount })),
+    getExecutions(original).map(({ id, status, nextCount }) => ({ id, status, nextCount })));
+  assert.deepEqual(getSwitchMapState(trace, 'operator:1'), getSwitchMapState(original, 'operator:1'));
+  const link = trace.events.find(event => event.kind === 'link')!;
+  assert.match(explainEvent(trace, link), /Observed inner connection/);
+  assert.doesNotMatch(explainEvent(trace, link), /was unsubscribed/);
+});
+
+test('shared connection descriptions have independent lifetimes and missing-start links remain unknown', () => {
+  const original = recording();
+  const start: TraceEvent = { ...original.events[0]!, role: 'connection', executionId: 'connection:1' };
+  assert.match(explainEvent(original, start), /Shared source connection connection:1/);
+  const link: TraceEvent = {
+    ...start, seq: 2, kind: 'link',
+    link: { kind: 'shared', sourceExecutionId: 'connection:1', destinationExecutionId: 'consumer:1' },
+  };
+  const trace: Trace = {
+    ...original, schemaVersion: 2, events: [link],
+    capture: { ...original.capture, droppedEvents: 1, totalEvents: 2, complete: false },
+  };
+  const summary = getExecutions(trace)[0]!;
+  assert.equal(summary.role, 'connection');
+  assert.equal(summary.status, 'unknown');
+  assert.equal(summary.startSeq, undefined);
+  assert.equal(summary.endSeq, undefined);
+  assert.equal(summary.nextCount, 0);
+  assert.match(explainEvent(trace, link), /not a delivered value or exclusive lifetime ownership/);
+});

@@ -57,7 +57,7 @@ test('arbitrary payload property names remain inert data', () => {
 
 test('rejects syntax errors, unsupported schemas, and unexpected structural fields', () => {
   assert.throws(() => parseTrace('{'), /Invalid trace JSON/);
-  for (const [field, value] of [['schemaVersion', 2], ['rxjsBaseline', '8.0.0'], ['surprise', true]] as const) {
+  for (const [field, value] of [['schemaVersion', 3], ['rxjsBaseline', '8.0.0'], ['surprise', true]] as const) {
     const input = mutableRecording();
     input[field] = value;
     assert.throws(() => parseTrace(JSON.stringify(input)), /Invalid trace/);
@@ -155,4 +155,116 @@ test('unavailable snapshots and reported clock failures survive a round trip', (
   assert.equal((result.capture as any).clockErrors, 2);
   input.capture.clockErrors = -1;
   assert.throws(() => parseTrace(JSON.stringify(input)), /safe integer/);
+});
+
+function linkedRecording(): Trace {
+  const original = recording();
+  return {
+    ...original,
+    schemaVersion: 2,
+    events: [
+      { seq: 1, time: 0, nodeId: 'result', executionId: 'consumer:1', kind: 'subscribe', port: 'output', role: 'boundary' },
+      { seq: 2, time: 0, nodeId: 'source', executionId: 'source:1', kind: 'subscribe', port: 'output', role: 'connection' },
+      { seq: 3, time: 0, nodeId: 'source', executionId: 'source:1', kind: 'link', port: 'output', role: 'connection',
+        link: { kind: 'shared', sourceExecutionId: 'source:1', destinationExecutionId: 'consumer:1' } },
+    ],
+  };
+}
+
+test('v2 round trips explicit subscription links and connection roles while v1 remains unchanged', () => {
+  const current = linkedRecording();
+  const imported = parseTrace(serializeTrace(current));
+  assert.deepEqual(imported, current);
+  assert.equal(imported.schemaVersion, 2);
+  assert.ok(Object.isFrozen(imported.events[2]?.link));
+  const legacy = recording();
+  assert.equal(JSON.stringify(parseTrace(serializeTrace(legacy))), JSON.stringify(legacy));
+  assert.equal(parseTrace(serializeTrace(legacy)).schemaVersion, 1);
+});
+
+test('v1 rejects new event kinds, link metadata, and connection roles instead of guessing their meaning', () => {
+  const current = JSON.parse(JSON.stringify(linkedRecording()));
+  current.schemaVersion = 1;
+  assert.throws(() => serializeTrace(current), /Invalid trace/);
+  const metadata = mutableRecording();
+  metadata.events[1].link = { kind: 'upstream', sourceExecutionId: 'source:1', destinationExecutionId: 'consumer:1' };
+  assert.throws(() => serializeTrace(metadata), /unknown field/);
+  const role = mutableRecording();
+  role.events.forEach((event: any) => { event.role = 'connection'; });
+  assert.throws(() => serializeTrace(role), /boundary \| operator \| inner/);
+});
+
+test('subscription links require valid distinct endpoints and belong to the source execution', () => {
+  for (const change of [
+    (value: any) => { value.events[2].link.destinationExecutionId = 'missing'; },
+    (value: any) => { value.events[2].link.destinationExecutionId = 'source:1'; },
+    (value: any) => { value.events[2].executionId = 'consumer:1'; },
+    (value: any) => { value.events[2].link.kind = 'guessed'; },
+    (value: any) => { value.events[2].link.extra = true; },
+  ]) {
+    const value = JSON.parse(JSON.stringify(linkedRecording()));
+    change(value);
+    assert.throws(() => serializeTrace(value), /Invalid trace/);
+  }
+});
+
+test('link events require metadata, an output port, and no value payload', () => {
+  for (const change of [
+    (value: any) => { delete value.events[2].link; },
+    (value: any) => { value.events[2].port = 'input'; },
+    (value: any) => { value.events[2].value = { status: 'captured', data: 1 }; },
+    (value: any) => { value.events[2].kind = 'next'; value.events[2].value = { status: 'captured', data: 1 }; },
+  ]) {
+    const value = JSON.parse(JSON.stringify(linkedRecording()));
+    change(value);
+    assert.throws(() => serializeTrace(value), /Invalid trace/);
+  }
+});
+
+test('duplicate subscription relationships and post-termination link events are rejected', () => {
+  const duplicate: any = JSON.parse(JSON.stringify(linkedRecording()));
+  duplicate.events.push({ ...duplicate.events[2], seq: 4 });
+  duplicate.capture.totalEvents = 4;
+  assert.throws(() => serializeTrace(duplicate), /duplicate subscription link/);
+
+  const ended: any = JSON.parse(JSON.stringify(linkedRecording()));
+  ended.events.splice(2, 0, { ...ended.events[1], seq: 3, kind: 'complete' });
+  ended.events[3].seq = 4;
+  ended.capture.totalEvents = 4;
+  assert.throws(() => serializeTrace(ended), /event after execution termination/);
+
+  const destinationEnded: any = JSON.parse(JSON.stringify(linkedRecording()));
+  destinationEnded.events.splice(2, 0, { ...destinationEnded.events[0], seq: 3, kind: 'unsubscribe' });
+  destinationEnded.events[3].seq = 4;
+  destinationEnded.capture.totalEvents = 4;
+  assert.throws(() => serializeTrace(destinationEnded), /destination already terminated/);
+});
+
+test('v2 relationship kinds preserve inner-parent and shared-connection semantics', () => {
+  const shared: any = JSON.parse(JSON.stringify(linkedRecording()));
+  shared.events[1].role = 'boundary';
+  shared.events[2].role = 'boundary';
+  assert.throws(() => serializeTrace(shared), /shared link must originate from a connection/);
+  const inner: any = JSON.parse(JSON.stringify(linkedRecording()));
+  inner.events[2].link.kind = 'inner';
+  assert.throws(() => serializeTrace(inner), /inner link must connect/);
+  const parent: any = JSON.parse(JSON.stringify(linkedRecording()));
+  parent.events[1].parentExecutionId = 'consumer:1';
+  assert.throws(() => serializeTrace(parent), /only inner executions/);
+});
+
+test('evicted endpoint starts are allowed but a retained future start cannot precede its link', () => {
+  const original = linkedRecording();
+  const partial: Trace = {
+    ...original,
+    events: original.events.slice(2),
+    capture: { ...original.capture, droppedEvents: 2, complete: false },
+  };
+  assert.deepEqual(parseTrace(serializeTrace(partial)), partial);
+  const future: Trace = {
+    ...partial,
+    events: [...partial.events, { ...original.events[0]!, seq: 4 }],
+    capture: { ...partial.capture, totalEvents: 4 },
+  };
+  assert.throws(() => serializeTrace(future), /endpoints must already exist/);
 });

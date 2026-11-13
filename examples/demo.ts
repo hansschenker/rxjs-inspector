@@ -1,9 +1,42 @@
-import { Observable, VirtualTimeScheduler, interval, share } from 'rxjs';
+import { Observable, VirtualTimeScheduler, filter, interval, map, of, scan } from 'rxjs';
 import { createInspector } from '../src/index.js';
 import { mountInspector } from '../src/viewer.js';
 import type { Trace } from '../src/types.js';
 
-export type Scenario = 'switchMap' | 'independent' | 'shared' | 'error' | 'unsubscribe';
+export type Scenario = 'labels' | 'switchMap' | 'independent' | 'shared' | 'error' | 'unsubscribe';
+
+function recordLabelledOperators(): Trace {
+  const scheduler = new VirtualTimeScheduler();
+  const inspector = createInspector({
+    name: 'Stable labels · two cold runs',
+    clock: { name: 'Synchronous fixture', kind: 'virtual', now: () => scheduler.now() },
+    nodes: [
+      { id: 'values', label: 'numbers$', kind: 'source' },
+      { id: 'double', label: 'Double each value', kind: 'operator', operator: 'map', domain: 'doubleValue' },
+      { id: 'accept', label: 'Accept values above two', kind: 'operator', operator: 'filter', domain: 'aboveTwo' },
+      { id: 'total', label: 'Running total', kind: 'operator', operator: 'scan', domain: 'addValue' },
+      { id: 'results', label: 'totals$', kind: 'sink' },
+    ],
+    edges: [
+      { from: 'values', to: 'double' }, { from: 'double', to: 'accept' },
+      { from: 'accept', to: 'total' }, { from: 'total', to: 'results' },
+    ],
+  });
+  const doubleValue = (value: number): number => value * 2;
+  const aboveTwo = (value: number): boolean => value > 2;
+  const addValue = (total: number, value: number): number => total + value;
+  const totals$ = of(1, 2, 3).pipe(
+    inspector.inspect<number>('values'),
+    inspector.operator('double', map(doubleValue)),
+    inspector.operator('accept', filter(aboveTwo)),
+    inspector.operator('total', scan(addValue, 0)),
+    inspector.inspect<number>('results'),
+  );
+  // Two actual subscriptions: labels remain stable and execution IDs differ.
+  totals$.subscribe();
+  totals$.subscribe();
+  return inspector.getTrace();
+}
 
 function recordSearch(): Trace {
   const scheduler = new VirtualTimeScheduler();
@@ -46,21 +79,29 @@ function recordConsumers(shared: boolean): Trace {
     clock: { name: 'Consumer fixture', kind: 'virtual', now: () => scheduler.now() },
     nodes: [
       { id: 'producer', label: 'producer$', kind: 'source' },
+      ...(shared ? [{ id: 'shared', label: 'Shared packages', kind: 'operator' as const, operator: 'share' }] : []),
       { id: 'consumer-a', label: 'consumer A', kind: 'sink' },
       { id: 'consumer-b', label: 'consumer B', kind: 'sink' },
     ],
-    edges: [{ from: 'producer', to: 'consumer-a' }, { from: 'producer', to: 'consumer-b' }],
+    edges: shared
+      ? [{ from: 'producer', to: 'shared' }, { from: 'shared', to: 'consumer-a' }, { from: 'shared', to: 'consumer-b' }]
+      : [{ from: 'producer', to: 'consumer-a' }, { from: 'producer', to: 'consumer-b' }],
   });
   const producer$ = new Observable<string>(subscriber => {
-    const value = scheduler.schedule(() => subscriber.next('shared package'), 10);
-    const complete = scheduler.schedule(() => subscriber.complete(), 30);
-    return () => { value.unsubscribe(); complete.unsubscribe(); };
+    const firstValue = scheduler.schedule(() => subscriber.next('first package'), 10);
+    const secondValue = scheduler.schedule(() => subscriber.next('second package'), 25);
+    const complete = scheduler.schedule(() => subscriber.complete(), 50);
+    return () => { firstValue.unsubscribe(); secondValue.unsubscribe(); complete.unsubscribe(); };
   }).pipe(inspector.inspect<string>('producer'));
   const source$ = shared
-    ? producer$.pipe(share({ resetOnError: true, resetOnComplete: true, resetOnRefCountZero: true }))
+    ? producer$.pipe(inspector.share<string>('shared', { resetOnError: true, resetOnComplete: true, resetOnRefCountZero: true }))
     : producer$;
-  source$.pipe(inspector.inspect('consumer-a')).subscribe();
-  scheduler.schedule(() => source$.pipe(inspector.inspect('consumer-b')).subscribe(), 5);
+  const firstConsumer = source$.pipe(inspector.inspect('consumer-a')).subscribe();
+  scheduler.schedule(() => {
+    const secondConsumer = source$.pipe(inspector.inspect('consumer-b')).subscribe();
+    scheduler.schedule(() => secondConsumer.unsubscribe(), 30);
+  }, 5);
+  scheduler.schedule(() => firstConsumer.unsubscribe(), 15);
   scheduler.flush();
   return inspector.getTrace();
 }
@@ -112,6 +153,7 @@ function recordUnsubscription(): Trace {
 /** Each invocation runs a fresh controlled fixture. Scrubbing the viewer does not. */
 export function createDemoTrace(scenario: Scenario): Trace {
   switch (scenario) {
+    case 'labels': return recordLabelledOperators();
     case 'switchMap': return recordSearch();
     case 'independent': return recordConsumers(false);
     case 'shared': return recordConsumers(true);
@@ -121,9 +163,10 @@ export function createDemoTrace(scenario: Scenario): Trace {
 }
 
 const descriptions: Record<Scenario, string> = {
+  labels: 'Two cold runs use the same map, filter, and scan labels. Each run produces 4 then 10 with separate subscription identities. All values are synchronous; event ordinals show their order.',
   switchMap: 'A newer query replaces the first inner subscription. When the outer source completes, the output waits for the active inner. Both inner sources are controlled cold fixtures.',
   independent: 'Two consumers subscribe to a cold source at different times. The recording contains two separate producer executions.',
-  shared: 'The same two consumers now use an explicitly shared source. The recording contains one upstream producer execution and two consumer subscriptions.',
+  shared: 'Both consumers join before the first value. A leaves at 15 ms; the shared source stays active for B until B leaves at 35 ms. The graph records the shared connection separately from both consumers.',
   error: 'An inner source emits an error. Inspect how it reaches the output and how the active outer subscription is disposed.',
   unsubscribe: 'The consumer explicitly unsubscribes at 35 ms. Disposal closes the observed executions without a complete notification.',
 };
